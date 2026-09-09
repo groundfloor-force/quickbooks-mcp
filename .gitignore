@@ -7,6 +7,11 @@ coverage
 .env
 .env.local
 .env.*.local
+# Token-store temp file left behind by an interrupted atomic write
+# (saveTokensToEnv writes "<token store>.tmp.<pid>"); it holds a refresh token.
+.env.tmp.*
+# Local token store when QUICKBOOKS_TOKEN_STORE_PATH points inside the repo
+qbo-token.env
 tokens.json
 
 start.cmd
