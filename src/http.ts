@@ -39,6 +39,80 @@ import { emailFromAuthInfo } from "./auth/tokens.js";
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
+const PRIVACY_PATH = "/privacy";
+const TERMS_PATH = "/terms";
+
+/** Date shown on the policy pages. Fixed at the release these pages shipped. */
+const POLICY_EFFECTIVE_DATE = "9 September 2026";
+
+/**
+ * Minimal self-contained document. No external assets: these pages are served
+ * to OAuth consent reviewers and must render with no network access beyond the
+ * page itself.
+ */
+const policyPage = (title: string, sections: string): string => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1a1a1a;
+         background: #fff; margin: 0 auto; padding: 40px 24px; max-width: 720px;
+         line-height: 1.6; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  p, li { color: #333; }
+  ul { padding-left: 20px; }
+  .meta { color: #666; font-size: 14px; margin: 0 0 24px; }
+  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e3e5e8;
+           color: #666; font-size: 14px; }
+</style></head>
+<body>
+<h1>${title}</h1>
+<p class="meta">Effective date: ${POLICY_EFFECTIVE_DATE}</p>
+${sections}
+<footer>Contact: <a href="mailto:steven@getcore.ca">steven@getcore.ca</a></footer>
+</body></html>`;
+
+const PRIVACY_HTML = policyPage(
+  "CORE QuickBooks MCP — Privacy Policy",
+  `<p>This service is an internal tool operated by CORE Property Services / Ground Floor
+Property Management for its own employees. It is not offered to the general public.</p>
+
+<h2>What we receive when you sign in</h2>
+<p>Sign-in uses Google. We receive only your name and email address, and we use them
+solely to confirm that you are an authorized employee.</p>
+
+<h2>QuickBooks data</h2>
+<p>QuickBooks data is accessed on your behalf and returned to the AI assistant you are
+using. We do not store QuickBooks data on this server beyond in-memory session state,
+which is discarded when the session ends or the server restarts.</p>
+
+<h2>Logging</h2>
+<p>Access is logged for audit purposes. Each log entry records the user's email address,
+the name of the tool invoked, and a timestamp.</p>
+
+<h2>Sharing</h2>
+<p>No data is sold or shared with third parties.</p>`
+);
+
+const TERMS_HTML = policyPage(
+  "CORE QuickBooks MCP — Terms of Service",
+  `<h2>Who may use this service</h2>
+<p>Use is restricted to authorized employees on the allow-list maintained by CORE
+Property Services / Ground Floor Property Management.</p>
+
+<h2>Your responsibilities</h2>
+<ul>
+  <li>You must not share your sign-in credentials.</li>
+  <li>You must not share your access to this service with anyone else.</li>
+</ul>
+
+<h2>Revocation</h2>
+<p>Access may be revoked at any time, without notice, at the operator's discretion.</p>
+
+<h2>No warranty</h2>
+<p>This service is provided as-is for internal use, without warranty of any kind.</p>`
+);
 
 // Railway injects PORT; fall back to 3000 for local runs.
 const PORT = Number.parseInt(process.env.PORT ?? "", 10) || 3000;
@@ -169,6 +243,15 @@ const main = async (): Promise<void> => {
   // Public: the deploy health check must never require a token.
   app.get(HEALTH_PATH, (_req: Request, res: Response) => {
     res.type("text/plain").send("ok");
+  });
+
+  // Public: policy pages. These must stay reachable without a token — they are
+  // linked from the Google OAuth consent screen, which is fetched anonymously.
+  app.get(PRIVACY_PATH, (_req: Request, res: Response) => {
+    res.type("html").send(PRIVACY_HTML);
+  });
+  app.get(TERMS_PATH, (_req: Request, res: Response) => {
+    res.type("html").send(TERMS_HTML);
   });
 
   // OAuth authorization server: /.well-known/*, /authorize, /token,
