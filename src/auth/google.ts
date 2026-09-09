@@ -7,8 +7,16 @@
  * domain rule is applied.
  */
 
+import { webcrypto } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { AuthConfig } from "./config.js";
+
+// jose reads the bare `crypto` global at call time. Node 20+ defines it, and
+// package.json/.nvmrc pin that — this is the belt-and-braces for a runtime that
+// slips through anyway (Node < 20 threw "ReferenceError: crypto is not defined"
+// during Google ID token verification). Safe on modern Node: ??= leaves the
+// built-in global untouched.
+globalThis.crypto ??= webcrypto as Crypto;
 
 const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";

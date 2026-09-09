@@ -5,6 +5,9 @@
     "license": "MIT",
     "main": "dist/index.js",
     "type": "module",
+    "engines": {
+        "node": ">=20"
+    },
     "bin": "./dist/index.js",
     "files": [
         "dist"
@@ -16,7 +19,7 @@
         "lint:fix": "eslint --fix",
         "lint": "eslint .",
         "auth": "node dist/auth-server.js",
-        "start:http": "QUICKBOOKS_TOKEN_STORE_PATH=/tmp/qbo-token.env node dist/http.js",
+        "start:http": "node dist/http.js",
         "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
         "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
         "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"

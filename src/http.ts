@@ -57,21 +57,24 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 
-/**
- * Warn loudly when rotated refresh tokens are being written somewhere that does
- * not survive a redeploy. QUICKBOOKS_TOKEN_STORE_PATH is read by the client at
- * import time; /tmp is writable in the container but is NOT persistent.
- */
-const logTokenStoreWarning = (): void => {
-  const tokenStorePath = process.env.QUICKBOOKS_TOKEN_STORE_PATH?.trim();
+/** Fallback token store when the environment does not name one. Ephemeral. */
+const DEFAULT_TOKEN_STORE_PATH = "/tmp/qbo-token.env";
 
-  if (!tokenStorePath) {
-    console.warn(
-      "[qbo-mcp] WARNING: QUICKBOOKS_TOKEN_STORE_PATH is not set. Rotated refresh " +
-        "tokens will be written next to the installed module, which is typically " +
-        "read-only or ephemeral in a container. Set it to a writable path."
-    );
-    return;
+/**
+ * Resolves where rotated QuickBooks refresh tokens are persisted, and warns when
+ * that location will not survive a redeploy.
+ *
+ * The default is applied HERE rather than in the start script so that a
+ * deployment variable — a mounted volume, say — always wins. It must run before
+ * ./register-all-tools.js is imported, because the QuickBooks client reads
+ * QUICKBOOKS_TOKEN_STORE_PATH once, at module-evaluation time.
+ */
+const configureTokenStore = (): void => {
+  const configured = process.env.QUICKBOOKS_TOKEN_STORE_PATH?.trim();
+  const tokenStorePath = configured || DEFAULT_TOKEN_STORE_PATH;
+
+  if (!configured) {
+    process.env.QUICKBOOKS_TOKEN_STORE_PATH = DEFAULT_TOKEN_STORE_PATH;
   }
 
   const isEphemeral =
@@ -131,7 +134,9 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
-  logTokenStoreWarning();
+  // Must precede the dynamic import below — the QuickBooks client reads
+  // QUICKBOOKS_TOKEN_STORE_PATH as its module body evaluates.
+  configureTokenStore();
 
   // Imported dynamically so the warnings above are emitted BEFORE the QuickBooks
   // client module is evaluated — that module validates credentials at import

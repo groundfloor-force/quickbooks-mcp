@@ -9,11 +9,15 @@
  * Refresh tokens are opaque random strings held in memory; see store.ts.
  */
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, webcrypto } from "node:crypto";
 import { SignJWT, jwtVerify, errors as joseErrors } from "jose";
 import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { AuthConfig } from "./config.js";
+
+// jose reads the bare `crypto` global at call time; see the matching note in
+// google.ts. ??= leaves Node 20+'s built-in global untouched.
+globalThis.crypto ??= webcrypto as Crypto;
 
 export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 const JWT_ALGORITHM = "HS256";
