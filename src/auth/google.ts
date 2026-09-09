@@ -1,0 +1,99 @@
+/**
+ * Google as the identity provider — standard OAuth 2.0 / OpenID Connect web
+ * flow, scope "openid email".
+ *
+ * Google only establishes WHO the user is. Whether that person may use this
+ * server is decided solely by the ALLOWED_EMAILS list (see config.ts); no
+ * domain rule is applied.
+ */
+
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import type { AuthConfig } from "./config.js";
+
+const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs";
+// Google is inconsistent about the scheme in the `iss` claim; both are valid.
+const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
+
+/** Cached across calls — jose refreshes the key set on its own schedule. */
+const googleJwks = createRemoteJWKSet(new URL(GOOGLE_JWKS_URI));
+
+export interface GoogleIdentity {
+  email: string;
+  emailVerified: boolean;
+}
+
+/** Builds the URL the user's browser is sent to in order to sign in. */
+export const buildGoogleAuthorizationUrl = (config: AuthConfig, state: string): string => {
+  const url = new URL(GOOGLE_AUTH_ENDPOINT);
+  url.searchParams.set("client_id", config.googleClientId);
+  url.searchParams.set("redirect_uri", config.googleRedirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "openid email");
+  url.searchParams.set("state", state);
+  // Let the user pick which Google account to use rather than silently
+  // reusing whichever one the browser happens to be signed in as.
+  url.searchParams.set("prompt", "select_account");
+  return url.href;
+};
+
+/** Exchanges the Google authorization code for an ID token. */
+const exchangeCodeForIdToken = async (
+  config: AuthConfig,
+  code: string
+): Promise<string> => {
+  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: config.googleClientId,
+      client_secret: config.googleClientSecret,
+      redirect_uri: config.googleRedirectUri,
+      grant_type: "authorization_code",
+    }),
+  });
+
+  if (!response.ok) {
+    // Google echoes the client_id in errors but never the secret; even so, only
+    // the error code is surfaced, and the body is left for the server log.
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Google token exchange failed (HTTP ${response.status}): ${detail.slice(0, 500)}`
+    );
+  }
+
+  const payload = (await response.json()) as { id_token?: string };
+  if (!payload.id_token) {
+    throw new Error("Google token response did not include an id_token");
+  }
+  return payload.id_token;
+};
+
+/**
+ * Completes the Google leg: exchanges the code and verifies the resulting ID
+ * token's signature, issuer and audience against Google's published keys.
+ */
+export const resolveGoogleIdentity = async (
+  config: AuthConfig,
+  code: string
+): Promise<GoogleIdentity> => {
+  const idToken = await exchangeCodeForIdToken(config, code);
+
+  const { payload } = await jwtVerify(idToken, googleJwks, {
+    issuer: GOOGLE_ISSUERS,
+    audience: config.googleClientId,
+  });
+
+  const email = typeof payload.email === "string" ? payload.email : undefined;
+  if (!email) {
+    throw new Error("Google ID token did not contain an email claim");
+  }
+
+  // Google sends email_verified as a boolean, but older payloads use "true".
+  const rawVerified = payload.email_verified;
+  const emailVerified = rawVerified === true || rawVerified === "true";
+
+  return { email, emailVerified };
+};

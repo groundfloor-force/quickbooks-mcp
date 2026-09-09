@@ -23,8 +23,11 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.6.0",
+        "cors": "^2.8.6",
         "dotenv": "^16.4.7",
+        "express": "^5.2.1",
         "intuit-oauth": "^4.0.0",
+        "jose": "^6.2.12",
         "node-quickbooks": "^2.0.43",
         "open": "^9.1.0",
         "zod": "^3.24.2"
@@ -32,6 +35,8 @@
     "devDependencies": {
         "@eslint/js": "^9.22.0",
         "@jest/globals": "^30.3.0",
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
         "@types/jest": "^30.0.0",
         "@types/node": "^22.13.10",
         "eslint": "^9.22.0",

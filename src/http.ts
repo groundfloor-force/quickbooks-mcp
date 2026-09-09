@@ -1,28 +1,41 @@
 #!/usr/bin/env node
 
 /**
- * Remote (Streamable HTTP) entry point.
+ * Remote (Streamable HTTP) entry point, protected by OAuth.
  *
  * Serves the same QuickBooks MCP server as the stdio entry point (src/index.ts)
- * over HTTP, so it can be hosted behind HTTPS and added as a custom connector.
- * Tool definitions are NOT duplicated here — both entry points register the
+ * over HTTP so it can be added to Claude.ai as a custom connector. Tool
+ * definitions are NOT duplicated here — both entry points register the
  * identical list via ./register-all-tools.js.
  *
- * Routes:
- *   GET  /health  -> 200 "ok"
- *   POST /mcp     -> client-to-server JSON-RPC (initialize starts a session)
- *   GET  /mcp     -> server-to-client SSE stream for an existing session
- *   DELETE /mcp   -> explicit session termination
+ * This process is both the MCP resource server AND its OAuth authorization
+ * server. Google is only the identity provider: it establishes who the user is,
+ * and ALLOWED_EMAILS decides whether that person may in.
  *
- * NOTE: there is deliberately NO authentication in front of /mcp yet. Anyone
- * who can reach this URL can drive the QuickBooks tools. Auth is the next task.
+ * Routes:
+ *   GET  /health                                   -> 200 "ok"  (public)
+ *   GET  /.well-known/oauth-authorization-server   -> AS metadata (public)
+ *   GET  /.well-known/oauth-protected-resource/mcp -> RS metadata (public)
+ *   /authorize /token /register /revoke            -> OAuth endpoints, PKCE required
+ *   GET  /auth/google/callback                     -> Google redirects here
+ *   POST|GET|DELETE /mcp                           -> MCP, Bearer token required
  */
 
-import http from "node:http";
+import express, { type Request, type Response } from "express";
+import cors from "cors";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  mcpAuthRouter,
+  getOAuthProtectedResourceMetadataUrl,
+} from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { QuickbooksMCPServer } from "./server/qbo-mcp-server.js";
+import { loadAuthConfig, type AuthConfig } from "./auth/config.js";
+import { GoogleBackedOAuthProvider } from "./auth/provider.js";
+import { startExpirySweep } from "./auth/store.js";
+import { emailFromAuthInfo } from "./auth/tokens.js";
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
@@ -36,8 +49,13 @@ const HOST = "0.0.0.0";
 const MAX_BODY_BYTES =
   Number.parseInt(process.env.MCP_MAX_BODY_BYTES ?? "", 10) || 10 * 1024 * 1024;
 
-/** Live sessions, keyed by the session id the transport generates. */
-const transports = new Map<string, StreamableHTTPServerTransport>();
+/** A live MCP session, pinned to the user who opened it. */
+interface Session {
+  transport: StreamableHTTPServerTransport;
+  email: string;
+}
+
+const sessions = new Map<string, Session>();
 
 /**
  * Warn loudly when rotated refresh tokens are being written somewhere that does
@@ -75,46 +93,23 @@ const logTokenStoreWarning = (): void => {
   }
 };
 
-/** Reads and JSON-parses a request body, enforcing MAX_BODY_BYTES. */
-const readJsonBody = (req: http.IncomingMessage): Promise<unknown> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
+/**
+ * The audit trail: one info line per tool invocation, naming the signed-in user.
+ * Reads the already-parsed JSON-RPC body, so no tool code has to change.
+ */
+const logToolCalls = (email: string, body: unknown): void => {
+  const messages = Array.isArray(body) ? body : [body];
+  for (const message of messages) {
+    const record = message as { method?: unknown; params?: { name?: unknown } } | null;
+    if (record?.method === "tools/call") {
+      const tool = typeof record.params?.name === "string" ? record.params.name : "unknown";
+      console.info(`[qbo-mcp][audit] user=${email} tool=${tool}`);
+    }
+  }
+};
 
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(
-          Object.assign(new Error(`Request body exceeds ${MAX_BODY_BYTES} bytes`), {
-            statusCode: 413,
-          })
-        );
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-
-    req.on("error", reject);
-    req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      if (raw.trim() === "") {
-        resolve(undefined);
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(
-          Object.assign(new Error("Request body is not valid JSON"), { statusCode: 400 })
-        );
-      }
-    });
-  });
-
-/** Sends a JSON-RPC error that is well-formed even before a session exists. */
 const sendJsonRpcError = (
-  res: http.ServerResponse,
+  res: Response,
   statusCode: number,
   code: number,
   message: string
@@ -123,18 +118,28 @@ const sendJsonRpcError = (
     res.end();
     return;
   }
-  res.writeHead(statusCode, { "content-type": "application/json" });
-  res.end(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }));
+  res.status(statusCode).json({ jsonrpc: "2.0", error: { code, message }, id: null });
 };
 
 const main = async (): Promise<void> => {
+  // Fail fast, before anything else, with every configuration problem listed.
+  let config: AuthConfig;
+  try {
+    config = loadAuthConfig();
+  } catch (error) {
+    console.error(`[qbo-mcp] ${(error as Error).message}`);
+    process.exit(1);
+  }
+
   logTokenStoreWarning();
 
-  // Imported dynamically so the warning above is emitted BEFORE the QuickBooks
+  // Imported dynamically so the warnings above are emitted BEFORE the QuickBooks
   // client module is evaluated — that module validates credentials at import
   // time and throws when they are missing, and a bare stack trace with no
   // preceding context is painful to diagnose from deploy logs.
-  let registerAllTools: (server: import("@modelcontextprotocol/sdk/server/mcp.js").McpServer) => void;
+  let registerAllTools: (
+    server: import("@modelcontextprotocol/sdk/server/mcp.js").McpServer
+  ) => void;
   try {
     ({ registerAllTools } = await import("./register-all-tools.js"));
   } catch (error) {
@@ -146,62 +151,88 @@ const main = async (): Promise<void> => {
     throw error;
   }
 
-  const httpServer = http.createServer((req, res) => {
-    void (async () => {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const provider = new GoogleBackedOAuthProvider(config);
+  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(config.resourceUrl);
+  startExpirySweep();
 
-      if (url.pathname === HEALTH_PATH) {
-        if (req.method !== "GET" && req.method !== "HEAD") {
-          res.writeHead(405, { allow: "GET, HEAD" }).end();
-          return;
-        }
-        res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-        res.end("ok");
-        return;
-      }
+  const app = express();
+  // Railway terminates TLS and forwards; without this the SDK's rate limiters
+  // see the proxy's address for every caller.
+  app.set("trust proxy", 1);
+  app.disable("x-powered-by");
 
-      if (url.pathname !== MCP_PATH) {
-        sendJsonRpcError(res, 404, -32601, `Not found: ${url.pathname}`);
+  // Public: the deploy health check must never require a token.
+  app.get(HEALTH_PATH, (_req: Request, res: Response) => {
+    res.type("text/plain").send("ok");
+  });
+
+  // OAuth authorization server: /.well-known/*, /authorize, /token,
+  // /register and /revoke. Must be mounted at the application root.
+  app.use(
+    mcpAuthRouter({
+      provider,
+      issuerUrl: config.issuerUrl,
+      baseUrl: config.publicUrl,
+      resourceServerUrl: config.resourceUrl,
+      resourceName: "QuickBooks Online MCP Server",
+    })
+  );
+
+  // Where Google sends the user back after sign-in.
+  app.get("/auth/google/callback", provider.handleGoogleCallback);
+
+  const requireAuth = requireBearerAuth({ verifier: provider, resourceMetadataUrl });
+
+  // Expose the headers a browser-based MCP client needs to read. The SDK's own
+  // OAuth handlers already apply CORS to their routes.
+  const mcpCors = cors({
+    exposedHeaders: ["mcp-session-id", "WWW-Authenticate"],
+    allowedHeaders: ["content-type", "authorization", "mcp-session-id", "mcp-protocol-version"],
+  });
+
+  app.options(MCP_PATH, mcpCors);
+
+  /** Resolves the session for a request, enforcing that it belongs to the caller. */
+  const resolveSession = (req: Request, res: Response): Session | undefined | "denied" => {
+    const sessionId = req.headers["mcp-session-id"];
+    if (typeof sessionId !== "string" || sessionId === "") return undefined;
+
+    const session = sessions.get(sessionId);
+    if (!session) return undefined;
+
+    const email = emailFromAuthInfo(req.auth);
+    if (session.email !== email) {
+      // Every signed-in user has the same tools, so this is not a privilege
+      // boundary — but an unpinned session would make the audit log unreliable.
+      console.warn(
+        `[qbo-mcp][audit] Session ${sessionId} belongs to ${session.email}; ` +
+          `rejected request from ${email}`
+      );
+      sendJsonRpcError(res, 403, -32003, "Session belongs to a different user");
+      return "denied";
+    }
+    return session;
+  };
+
+  app.post(
+    MCP_PATH,
+    mcpCors,
+    requireAuth,
+    express.json({ limit: MAX_BODY_BYTES }),
+    async (req: Request, res: Response) => {
+      const email = emailFromAuthInfo(req.auth);
+      logToolCalls(email, req.body);
+
+      const session = resolveSession(req, res);
+      if (session === "denied") return;
+
+      if (session) {
+        await session.transport.handleRequest(req, res, req.body);
         return;
       }
 
       const sessionId = req.headers["mcp-session-id"];
-      const existing =
-        typeof sessionId === "string" ? transports.get(sessionId) : undefined;
-
-      // GET (SSE stream) and DELETE (termination) only ever act on a live session.
-      if (req.method === "GET" || req.method === "DELETE") {
-        if (!existing) {
-          sendJsonRpcError(res, 404, -32001, "Unknown or expired session");
-          return;
-        }
-        await existing.handleRequest(req, res);
-        return;
-      }
-
-      if (req.method !== "POST") {
-        res.writeHead(405, { allow: "GET, POST, DELETE" }).end();
-        return;
-      }
-
-      // The body must be parsed here to tell an initialize request apart from a
-      // call on an existing session, so it is handed to the transport directly
-      // (the stream has already been consumed).
-      let body: unknown;
-      try {
-        body = await readJsonBody(req);
-      } catch (error) {
-        const statusCode = (error as { statusCode?: number }).statusCode ?? 400;
-        sendJsonRpcError(res, statusCode, -32700, (error as Error).message);
-        return;
-      }
-
-      if (existing) {
-        await existing.handleRequest(req, res, body);
-        return;
-      }
-
-      if (!isInitializeRequest(body)) {
+      if (!isInitializeRequest(req.body)) {
         // A supplied-but-unknown session id must answer 404, not 400: that is the
         // signal a client uses to drop its session and re-initialize. Sessions are
         // held in memory, so every one of them is unknown after a restart or
@@ -224,12 +255,14 @@ const main = async (): Promise<void> => {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
-          transports.set(id, transport);
-          console.log(`[qbo-mcp] Session opened: ${id} (${transports.size} active)`);
+          sessions.set(id, { transport, email });
+          console.log(
+            `[qbo-mcp] Session opened: ${id} for ${email} (${sessions.size} active)`
+          );
         },
         onsessionclosed: (id) => {
-          transports.delete(id);
-          console.log(`[qbo-mcp] Session closed: ${id} (${transports.size} active)`);
+          sessions.delete(id);
+          console.log(`[qbo-mcp] Session closed: ${id} (${sessions.size} active)`);
         },
       });
 
@@ -237,32 +270,55 @@ const main = async (): Promise<void> => {
       // dropped connection cannot leak the session entry.
       transport.onclose = () => {
         const id = transport.sessionId;
-        if (id && transports.delete(id)) {
-          console.log(`[qbo-mcp] Session dropped: ${id} (${transports.size} active)`);
+        if (id && sessions.delete(id)) {
+          console.log(`[qbo-mcp] Session dropped: ${id} (${sessions.size} active)`);
         }
       };
 
       const mcpServer = QuickbooksMCPServer.NewServer();
       registerAllTools(mcpServer);
       await mcpServer.connect(transport);
-      await transport.handleRequest(req, res, body);
-    })().catch((error) => {
-      console.error("[qbo-mcp] Request failed:", error);
-      sendJsonRpcError(res, 500, -32603, "Internal server error");
-    });
+      await transport.handleRequest(req, res, req.body);
+    }
+  );
+
+  // GET (SSE stream) and DELETE (termination) only ever act on a live session.
+  const handleSessionOnly = async (req: Request, res: Response): Promise<void> => {
+    const session = resolveSession(req, res);
+    if (session === "denied") return;
+    if (!session) {
+      sendJsonRpcError(res, 404, -32001, "Unknown or expired session");
+      return;
+    }
+    await session.transport.handleRequest(req, res);
+  };
+
+  app.get(MCP_PATH, mcpCors, requireAuth, handleSessionOnly);
+  app.delete(MCP_PATH, mcpCors, requireAuth, handleSessionOnly);
+
+  app.use((req: Request, res: Response) => {
+    sendJsonRpcError(res, 404, -32601, `Not found: ${req.path}`);
   });
 
-  httpServer.listen(PORT, HOST, () => {
-    console.log(`[qbo-mcp] MCP Streamable HTTP endpoint: http://${HOST}:${PORT}${MCP_PATH}`);
-    console.log(`[qbo-mcp] Health check: http://${HOST}:${PORT}${HEALTH_PATH}`);
-    console.warn("[qbo-mcp] WARNING: /mcp is UNAUTHENTICATED — do not expose it publicly with live credentials.");
+  const httpServer = app.listen(PORT, HOST, () => {
+    console.log(`[qbo-mcp] Public URL:      ${config.publicUrl.href}`);
+    console.log(`[qbo-mcp] MCP endpoint:    ${config.resourceUrl.href}  (Bearer token required)`);
+    console.log(`[qbo-mcp] Health check:    ${new URL(HEALTH_PATH, config.publicUrl).href}`);
+    console.log(`[qbo-mcp] AS metadata:     ${new URL("/.well-known/oauth-authorization-server", config.publicUrl).href}`);
+    console.log(`[qbo-mcp] RS metadata:     ${resourceMetadataUrl}`);
+    console.log(`[qbo-mcp] Google callback: ${config.googleRedirectUri}`);
+    console.log(`[qbo-mcp] Allow-list:      ${config.allowedEmails.size} address(es)`);
+    console.warn(
+      "[qbo-mcp] NOTE: clients, authorization codes and refresh tokens are held in " +
+        "memory — a redeploy clears them and users simply sign in with Google again."
+    );
   });
 
   const shutdown = (signal: string) => {
     console.log(`[qbo-mcp] ${signal} received, shutting down.`);
     httpServer.close(() => process.exit(0));
-    for (const transport of transports.values()) {
-      void transport.close();
+    for (const session of sessions.values()) {
+      void session.transport.close();
     }
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
