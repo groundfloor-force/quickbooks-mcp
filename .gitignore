@@ -13,6 +13,10 @@ coverage
 # Local token store when QUICKBOOKS_TOKEN_STORE_PATH points inside the repo
 qbo-token.env
 tokens.json
+# OAuth auth store (registered clients incl. secrets, hashed refresh tokens), with
+# its atomic-write temp files (.tmp.<pid>) and set-aside copies (.corrupt-<ms>)
+auth-store.json
+auth-store.json.*
 
 start.cmd
 

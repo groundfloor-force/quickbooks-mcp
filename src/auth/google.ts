@@ -8,7 +8,7 @@
  */
 
 import { webcrypto } from "node:crypto";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { AuthConfig } from "./config.js";
 
 // jose reads the bare `crypto` global at call time. Node 20+ defines it, and
@@ -26,6 +26,18 @@ const GOOGLE_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
 
 /** Cached across calls — jose refreshes the key set on its own schedule. */
 const googleJwks = createRemoteJWKSet(new URL(GOOGLE_JWKS_URI));
+
+/**
+ * A Google sign-in that could not be completed or verified. The message names
+ * the specific check that failed and is safe to log: it never contains the
+ * authorization code, the ID token, or any credential.
+ */
+export class GoogleSignInError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "GoogleSignInError";
+  }
+}
 
 export interface GoogleIdentity {
   email: string;
@@ -51,30 +63,43 @@ const exchangeCodeForIdToken = async (
   config: AuthConfig,
   code: string
 ): Promise<string> => {
-  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: config.googleClientId,
-      client_secret: config.googleClientSecret,
-      redirect_uri: config.googleRedirectUri,
-      grant_type: "authorization_code",
-    }),
-  });
-
-  if (!response.ok) {
-    // Google echoes the client_id in errors but never the secret; even so, only
-    // the error code is surfaced, and the body is left for the server log.
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      `Google token exchange failed (HTTP ${response.status}): ${detail.slice(0, 500)}`
+  let response: Response;
+  try {
+    response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: config.googleClientId,
+        client_secret: config.googleClientSecret,
+        redirect_uri: config.googleRedirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+  } catch (error) {
+    throw new GoogleSignInError(
+      `Could not reach Google's token endpoint: ${(error as Error).message}`
     );
   }
 
-  const payload = (await response.json()) as { id_token?: string };
+  if (!response.ok) {
+    // Google's error body is {error, error_description} — e.g. invalid_grant
+    // (the code was already used or has expired) or invalid_client (wrong
+    // GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET). Only those two fields are kept.
+    const body = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      error_description?: string;
+    };
+    const detail = [body.error, body.error_description].filter(Boolean).join(" — ");
+    throw new GoogleSignInError(
+      `Google token exchange failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`
+    );
+  }
+
+  // Parsed defensively: a JSON.parse error quotes the body, which holds tokens.
+  const payload = (await response.json().catch(() => ({}))) as { id_token?: string };
   if (!payload.id_token) {
-    throw new Error("Google token response did not include an id_token");
+    throw new GoogleSignInError("Google's token response did not include an id_token");
   }
   return payload.id_token;
 };
@@ -89,14 +114,24 @@ export const resolveGoogleIdentity = async (
 ): Promise<GoogleIdentity> => {
   const idToken = await exchangeCodeForIdToken(config, code);
 
-  const { payload } = await jwtVerify(idToken, googleJwks, {
-    issuer: GOOGLE_ISSUERS,
-    audience: config.googleClientId,
-  });
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(idToken, googleJwks, {
+      issuer: GOOGLE_ISSUERS,
+      audience: config.googleClientId,
+    }));
+  } catch (error) {
+    // jose's messages name the failed check — `unexpected "aud" claim value`,
+    // `signature verification failed` — and never include the token or its
+    // claim values.
+    throw new GoogleSignInError(
+      `Google ID token failed verification: ${(error as Error).message}`
+    );
+  }
 
   const email = typeof payload.email === "string" ? payload.email : undefined;
   if (!email) {
-    throw new Error("Google ID token did not contain an email claim");
+    throw new GoogleSignInError("Google ID token did not contain an email claim");
   }
 
   // Google sends email_verified as a boolean, but older payloads use "true".

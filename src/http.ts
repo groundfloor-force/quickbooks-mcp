@@ -34,7 +34,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { QuickbooksMCPServer } from "./server/qbo-mcp-server.js";
 import { loadAuthConfig, type AuthConfig } from "./auth/config.js";
 import { GoogleBackedOAuthProvider } from "./auth/provider.js";
-import { startExpirySweep } from "./auth/store.js";
+import { loadAuthStore, resolveAuthStorePath, startExpirySweep } from "./auth/store.js";
 import { emailFromAuthInfo } from "./auth/tokens.js";
 
 const MCP_PATH = "/mcp";
@@ -207,6 +207,16 @@ const main = async (): Promise<void> => {
     console.error(`[qbo-mcp] ${(error as Error).message}`);
     process.exit(1);
   }
+
+  // Registered clients and refresh tokens, restored so a redeploy does not
+  // disconnect every MCP client. Resolved BEFORE configureTokenStore fills in its
+  // default QUICKBOOKS_TOKEN_STORE_PATH, which would otherwise mask the case
+  // where neither path variable was set and skip the warning.
+  const authStore = resolveAuthStorePath(process.env);
+  if (authStore.warning) {
+    console.warn(`[qbo-mcp] WARNING: ${authStore.warning}`);
+  }
+  loadAuthStore(authStore.path);
 
   // Must precede the dynamic import below — the QuickBooks client reads
   // QUICKBOOKS_TOKEN_STORE_PATH as its module body evaluates.
@@ -396,10 +406,6 @@ const main = async (): Promise<void> => {
     console.log(`[qbo-mcp] RS metadata:     ${resourceMetadataUrl}`);
     console.log(`[qbo-mcp] Google callback: ${config.googleRedirectUri}`);
     console.log(`[qbo-mcp] Allow-list:      ${config.allowedEmails.size} address(es)`);
-    console.warn(
-      "[qbo-mcp] NOTE: clients, authorization codes and refresh tokens are held in " +
-        "memory — a redeploy clears them and users simply sign in with Google again."
-    );
   });
 
   const shutdown = (signal: string) => {

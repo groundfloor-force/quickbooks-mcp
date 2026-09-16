@@ -6,7 +6,8 @@
  * audit log records. Being stateless, they survive a restart — and cannot be
  * revoked before they expire (see revokeToken in provider.ts).
  *
- * Refresh tokens are opaque random strings held in memory; see store.ts.
+ * Refresh tokens are opaque random strings, persisted as SHA-256 digests; see
+ * store.ts.
  */
 
 import { randomBytes, webcrypto } from "node:crypto";

@@ -29,7 +29,11 @@ import {
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 
 import { isEmailAllowed, type AuthConfig } from "./config.js";
-import { buildGoogleAuthorizationUrl, resolveGoogleIdentity } from "./google.js";
+import {
+  GoogleSignInError,
+  buildGoogleAuthorizationUrl,
+  resolveGoogleIdentity,
+} from "./google.js";
 import {
   authorizationCodeStore,
   clientStore,
@@ -80,8 +84,9 @@ export class GoogleBackedOAuthProvider implements OAuthServerProvider {
   constructor(private readonly config: AuthConfig) {}
 
   /**
-   * Dynamic client registration, held in memory. The SDK generates the
-   * client_id/secret and hands us the finished record to store.
+   * Dynamic client registration, persisted by store.ts so a registered client
+   * survives a redeploy. The SDK generates the client_id/secret and hands us the
+   * finished record to store.
    */
   public readonly clientsStore: OAuthRegisteredClientsStore = {
     getClient: (clientId: string): OAuthClientInformationFull | undefined =>
@@ -295,7 +300,15 @@ export class GoogleBackedOAuthProvider implements OAuthServerProvider {
     try {
       identity = await resolveGoogleIdentity(this.config, code);
     } catch (error) {
-      console.error("[qbo-mcp][auth] Google identity verification failed:", error);
+      if (error instanceof GoogleSignInError) {
+        // The message names the failed check and is log-safe by construction:
+        // it never carries the Google code, the ID token, or a credential.
+        console.warn(
+          `[qbo-mcp][auth] Google sign-in failed for client ${pending.clientId}: ${error.message}`
+        );
+      } else {
+        console.error("[qbo-mcp][auth] Google identity verification failed unexpectedly:", error);
+      }
       res
         .status(502)
         .type("html")
