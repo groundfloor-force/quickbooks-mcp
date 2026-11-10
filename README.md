@@ -411,6 +411,73 @@ QUICKBOOKS_ENVIRONMENT=sandbox  # or 'production'
 
 ---
 
+## Service keys (remote server, non-interactive clients)
+
+The remote server (`dist/http.js`) normally lets people in through the Google sign-in and
+`ALLOWED_EMAILS`. A program that can't sign in with a browser, such as the `gd-qbo-worker` sync,
+uses a **service key** instead: a long random secret that it sends as `Authorization: Bearer <key>`
+on `/mcp`.
+
+- **Off by default.** With `SERVICE_KEYS` unset or empty, nothing changes: only the Google sign-in
+  works.
+- **Identity.** A request with a matching key runs as `service:<name>`. That name appears wherever a
+  user's email appears today: the `[qbo-mcp][audit] user=...` line, the session log, and session
+  pinning.
+- **Fallback.** Any other bearer token goes to the Google sign-in, unchanged.
+- **Secrecy.** Keys are compared in constant time and never logged. Only a SHA-256 digest is kept in
+  memory.
+
+### 1. Generate a key
+
+In PowerShell (prints one 48-character random key from Windows' cryptographic random generator):
+
+```powershell
+$b=[byte[]]::new(36); [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b).Replace('+','-').Replace('/','_')
+```
+
+- **Rules:**
+  - a key must be at least **32 characters**;
+  - it may only use `A-Z a-z 0-9 . _ ~ + / = -` (no `:` `,` or spaces, which are separators);
+  - names and keys must be unique.
+- **If a rule is broken,** the server **refuses to start** and lists every problem in the deploy log,
+  without printing any key.
+- **Handling:** treat the key like a password. Put it only in Railway variables and the client's
+  `.env`; never commit it.
+
+### 2. Set `SERVICE_KEYS` on the APC Railway service
+
+Format: `name:key`, several separated by commas, each with an optional `:readonly`:
+
+```
+SERVICE_KEYS=gd-qbo-worker:<key>:readonly
+```
+
+1. Railway → project **QBO MCP Server** → service **APC - QBO MCP** → **Variables**.
+2. **New Variable**: name `SERVICE_KEYS`, value as above. Railway redeploys the service when a
+   variable changes.
+3. Check the deploy log for `[qbo-mcp] Service keys:    1 (gd-qbo-worker [readonly])`. It shows names
+   and scopes, never keys.
+4. Give the same key to the client. For the worker, that is `QBO_MCP_API_KEY` in its `.env`.
+
+Only the service that should accept the key needs the variable: CORE and GFPM stay as they are.
+
+### 3. The `:readonly` suffix
+
+`name:key:readonly` makes **the server itself** refuse any tool whose name does not start with
+`search_`, `get_` or `read_`. The refusal is HTTP 403 with the JSON-RPC error `-32004`, and an
+audit line `user=service:<name> DENIED tool=<tool>`. `initialize`, `tools/list` and the read tools
+work normally.
+
+Use `:readonly` while a client is only reading, such as the worker's shadow pass. Remove the suffix,
+and let the service redeploy, only when that client is meant to write.
+
+**Rotating a key:**
+1. Add the new key under a second name: `gd-qbo-worker:<new>,gd-qbo-worker-old:<old>`.
+2. Switch the client to the new key.
+3. Remove the old entry.
+
+---
+
 ## Development
 
 ### Building
