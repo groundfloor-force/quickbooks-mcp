@@ -24,6 +24,9 @@ describe('Bill Handlers', () => {
   beforeEach(() => {
     resetAllMocks();
     resetUploadMock();
+    // Default: the duplicate check finds nothing, so the create path runs as before.
+    // (The searchQuickbooksBills tests below set their own findBills.)
+    mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
   });
 
   describe('createQuickbooksBill', () => {
@@ -160,6 +163,95 @@ describe('Bill Handlers', () => {
       );
       expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
       expect(mockHttpsRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createQuickbooksBill duplicate guard', () => {
+    // A legacy flat line with no DetailType: only the reshaped line counts toward the total.
+    const bill = { VendorRef: { value: '56' }, TxnDate: '2026-11-05', Line: [{ Amount: 500, AccountRef: { value: '1' } }] };
+    const existing = {
+      Id: '900',
+      DocNumber: 'INV-1042',
+      TotalAmt: 575,
+      TxnDate: '2026-11-05',
+      VendorRef: { value: '56', name: 'Harbour Lumber' },
+      Line: [{ Amount: 500, DetailType: 'AccountBasedExpenseLineDetail' }],
+    };
+    const refusal =
+      'Possible duplicate — Bill already exists: Id 900, #INV-1042, $575, 2026-11-05, vendor Harbour Lumber. ' +
+      'Pass allow_duplicate: true to create anyway.';
+
+    it('refuses when a matching bill exists, checking the reshaped lines, without creating', async () => {
+      mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: { Bill: [existing] } }));
+
+      const result = await createQuickbooksBill(bill);
+
+      expect(result).toEqual({ result: null, isError: true, error: refusal });
+      expect((mockQuickBooksInstance.findBills.mock.calls[0] as any)[0]).toEqual([
+        { field: 'VendorRef', value: '56', operator: '=' },
+        { field: 'TxnDate', value: '2026-11-05', operator: '=' },
+        { field: 'limit', value: 50 },
+      ]);
+      expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
+    });
+
+    it('refuses before uploading anything when an attachment was given', async () => {
+      mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: { Bill: [existing] } }));
+
+      const result = await createQuickbooksBill(bill, { file_name: 'invoice.pdf', base64_content: 'JVBERg==' });
+
+      expect(result.error).toBe(refusal);
+      expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
+      expect(mockHttpsRequest).not.toHaveBeenCalled();
+    });
+
+    it('creates as before when no duplicate is found', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_p: any, cb: any) => cb(null, { Id: '901' }));
+
+      const result = await createQuickbooksBill(bill);
+
+      expect(result).toEqual({ result: { Id: '901' }, isError: false, error: null });
+      expect(mockQuickBooksInstance.findBills).toHaveBeenCalledTimes(1);
+      expect((mockQuickBooksInstance.createBill.mock.calls[0] as any)[0]).toEqual({
+        VendorRef: { value: '56' },
+        TxnDate: '2026-11-05',
+        Line: [{ Amount: 500, AccountBasedExpenseLineDetail: { AccountRef: { value: '1' } } }],
+      });
+    });
+
+    it('skips the check entirely when allow_duplicate is true', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_p: any, cb: any) => cb(null, { Id: '902' }));
+
+      const result = await createQuickbooksBill(bill, undefined, true);
+
+      expect(result.isError).toBe(false);
+      expect(mockQuickBooksInstance.findBills).not.toHaveBeenCalled();
+      expect(mockQuickBooksInstance.createBill).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses (fails closed) when the duplicate check errors', async () => {
+      mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(new Error('QBO down'), null));
+
+      const result = await createQuickbooksBill(bill);
+
+      expect(result).toEqual({
+        result: null,
+        isError: true,
+        error: 'Duplicate check failed: Error: QBO down. Retry, or pass allow_duplicate: true.',
+      });
+      expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
+    });
+
+    it('refuses (fails closed) when the duplicate check throws synchronously', async () => {
+      mockQuickBooksInstance.findBills.mockImplementation(() => {
+        throw new Error('bad criteria');
+      });
+
+      const result = await createQuickbooksBill(bill);
+
+      expect(result.isError).toBe(true);
+      expect(result.error).toBe('Duplicate check failed: Error: bad criteria. Retry, or pass allow_duplicate: true.');
+      expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
     });
   });
 

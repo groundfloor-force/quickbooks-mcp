@@ -4,7 +4,8 @@ import { z } from "zod";
 
 const toolName = "create-bill";
 const toolDescription =
-  "Create a bill in QuickBooks Online. Optional attachment uploads a base64 file and links it; the response includes _attachment.";
+  "Create a bill in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true. " +
+  "Optional attachment uploads a base64 file and links it; the response includes _attachment.";
 
 const refSchema = z.object({
   value: z.string(),
@@ -53,10 +54,12 @@ const toolSchema = z.object({
     note: z.string().optional(),
     include_on_send: z.boolean().optional(),
   }).optional().describe("Upload this file and link it to the new record in the same call. Returns attachable_id."),
+  // Next to `bill`, not inside it: the bill object is sent to QBO as given.
+  allow_duplicate: z.boolean().optional().describe("Skip the duplicate check and create anyway"),
 });
 
 const toolHandler = async (args: { [x: string]: any }) => {
-  const response = await createQuickbooksBill(args.params.bill, args.params.attachment);
+  const response = await createQuickbooksBill(args.params.bill, args.params.attachment, args.params.allow_duplicate);
   if (response.isError) {
     return {
       content: [

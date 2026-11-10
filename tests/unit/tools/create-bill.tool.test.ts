@@ -37,9 +37,15 @@ describe('create-bill schema', () => {
     expect(CreateBillTool.schema.safeParse({ bill, attachment: { ...attachment, base64_content: '' } }).success).toBe(false);
   });
 
-  it('mentions the attachment in the description', () => {
+  it('accepts allow_duplicate next to the bill, and only as a boolean', () => {
+    expect(CreateBillTool.schema.safeParse({ bill, allow_duplicate: true }).success).toBe(true);
+    expect(CreateBillTool.schema.safeParse({ bill, allow_duplicate: 'yes' }).success).toBe(false);
+  });
+
+  it('mentions the duplicate check and the attachment in the description', () => {
     expect(CreateBillTool.description).toBe(
-      'Create a bill in QuickBooks Online. Optional attachment uploads a base64 file and links it; the response includes _attachment.'
+      'Create a bill in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true. ' +
+        'Optional attachment uploads a base64 file and links it; the response includes _attachment.'
     );
   });
 });
@@ -49,6 +55,8 @@ describe('create-bill tool handler', () => {
     resetAllMocks();
     resetUploadMock();
     mockQuickBooksInstance.createBill.mockImplementation((_payload: any, cb: any) => cb(null, created));
+    // Default: the duplicate check finds nothing.
+    mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
   });
 
   it('prints only the bill JSON when there is no attachment, as before', async () => {
@@ -87,5 +95,29 @@ describe('create-bill tool handler', () => {
 
     expect(res.content).toEqual([{ type: 'text', text: 'Error creating bill: Error: Bad vendor' }]);
     expect(mockHttpsRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports a likely duplicate as an error, and creates nothing', async () => {
+    const existing = { Id: '900', TotalAmt: 500, TxnDate: '2026-11-05', VendorRef: { value: '56' }, Line: bill.Line };
+    mockQuickBooksInstance.findBills.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: { Bill: [existing] } }));
+
+    const res = await run({ bill });
+
+    expect(res.content).toEqual([
+      {
+        type: 'text',
+        text:
+          'Error creating bill: Possible duplicate — Bill already exists: Id 900, #n/a, $500, 2026-11-05, vendor 56. ' +
+          'Pass allow_duplicate: true to create anyway.',
+      },
+    ]);
+    expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
+  });
+
+  it('passes allow_duplicate through, so the check is skipped and the bill created', async () => {
+    const res = await run({ bill, allow_duplicate: true });
+
+    expect(mockQuickBooksInstance.findBills).not.toHaveBeenCalled();
+    expect(res.content).toEqual([{ type: 'text', text: JSON.stringify(created) }]);
   });
 });

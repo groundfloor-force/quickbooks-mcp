@@ -5,7 +5,8 @@ import { z } from "zod";
 // Define the tool metadata
 const toolName = "create_purchase";
 const toolDescription =
-  "Create a purchase in QuickBooks Online. Optional attachment uploads a base64 file and links it; the response includes _attachment.";
+  "Create a purchase in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true. " +
+  "Optional attachment uploads a base64 file and links it; the response includes _attachment.";
 
 // Define the expected input schema for creating a purchase
 const toolSchema = z.object({
@@ -17,13 +18,19 @@ const toolSchema = z.object({
     note: z.string().optional(),
     include_on_send: z.boolean().optional(),
   }).optional().describe("Upload this file and link it to the new record in the same call. Returns attachable_id."),
+  // Next to `purchase`, not inside it: the purchase object is sent to QBO as given.
+  allow_duplicate: z.boolean().optional().describe("Skip the duplicate check and create anyway"),
 });
 
 type ToolParams = z.infer<typeof toolSchema>;
 
 // Define the tool handler
 const toolHandler = async (args: any) => {
-  const response = await createQuickbooksPurchase(args.params.purchase, args.params.attachment);
+  const response = await createQuickbooksPurchase(
+    args.params.purchase,
+    args.params.attachment,
+    args.params.allow_duplicate
+  );
 
   if (response.isError) {
     return {
