@@ -1,6 +1,7 @@
 import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import { findDuplicatePayment, describeHit } from "../helpers/duplicate-guard.js";
 
 export interface CreatePaymentInput {
   customer_ref: string;
@@ -19,11 +20,32 @@ export interface CreatePaymentInput {
       txn_type: string;
     }>;
   }>;
+  allow_duplicate?: boolean; // skip the duplicate check and create anyway
 }
 
 export async function createQuickbooksPayment(data: CreatePaymentInput): Promise<ToolResponse<any>> {
   try {
     const quickbooks = await QuickbooksClient.getInstance();
+
+    if (!data.allow_duplicate) {
+      let hit: any;
+      try {
+        hit = await findDuplicatePayment(quickbooks, data);
+      } catch (e) {
+        return {
+          result: null,
+          isError: true,
+          error: `Duplicate check failed: ${formatError(e)}. Retry, or pass allow_duplicate: true.`,
+        };
+      }
+      if (hit) {
+        return {
+          result: null,
+          isError: true,
+          error: "Possible duplicate — " + describeHit("Payment", hit) + " Pass allow_duplicate: true to create anyway.",
+        };
+      }
+    }
 
     const paymentPayload: any = {
       CustomerRef: { value: data.customer_ref },

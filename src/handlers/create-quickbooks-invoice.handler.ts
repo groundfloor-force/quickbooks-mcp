@@ -1,6 +1,7 @@
 import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import { findDuplicateInvoice, describeHit } from "../helpers/duplicate-guard.js";
 
 export interface CreateInvoiceInput {
   customer_ref: string; // customer id
@@ -22,6 +23,7 @@ export interface CreateInvoiceInput {
   customer_memo?: string; // CustomerMemo (customer-facing message)
   sales_term_ref?: string; // SalesTerm id; falls back to customer default
   bill_email?: string; // BillEmail address; falls back to customer default
+  allow_duplicate?: boolean; // skip the duplicate check and create anyway
 }
 
 // Primitive field type map (based on Quickbooks Invoice entity reference docs)
@@ -65,6 +67,26 @@ function normalizeInvoiceFields(obj: Record<string, any>): Record<string, any> {
 export async function createQuickbooksInvoice(data: CreateInvoiceInput): Promise<ToolResponse<any>> {
   try {
     const quickbooks = await QuickbooksClient.getInstance();
+
+    if (!data.allow_duplicate) {
+      let hit: any;
+      try {
+        hit = await findDuplicateInvoice(quickbooks, data);
+      } catch (e) {
+        return {
+          result: null,
+          isError: true,
+          error: `Duplicate check failed: ${formatError(e)}. Retry, or pass allow_duplicate: true.`,
+        };
+      }
+      if (hit) {
+        return {
+          result: null,
+          isError: true,
+          error: "Possible duplicate — " + describeHit("Invoice", hit) + " Pass allow_duplicate: true to create anyway.",
+        };
+      }
+    }
 
     const invoicePayload: any = {
       CustomerRef: { value: data.customer_ref },

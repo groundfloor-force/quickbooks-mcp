@@ -182,7 +182,7 @@ Complete CRUD operations are available for all entity types:
 
 | Tool | Description |
 |------|-------------|
-| `create_invoice` | Create a new invoice |
+| `create_invoice` | Create a new invoice. Refuses a likely duplicate (same DocNumber, or same customer + date window + line total) unless `allow_duplicate: true` |
 | `get_invoice` | Get invoice by ID |
 | `update_invoice` | Update invoice details |
 | `void_invoice` | Void an invoice (stays in the books at $0); refuses one with payments applied unless `allow_paid` |
@@ -197,7 +197,7 @@ Complete CRUD operations are available for all entity types:
 
 | Tool | Description |
 |------|-------------|
-| `create_payment` | Record a customer payment |
+| `create_payment` | Record a customer payment. Refuses a likely duplicate (same customer + date window, and either the same PaymentRefNum or the same TotalAmt applied to the same invoices) unless `allow_duplicate: true` |
 | `get_payment` | Get payment by ID |
 | `update_payment` | Update payment details |
 | `delete_payment` | Void a payment |

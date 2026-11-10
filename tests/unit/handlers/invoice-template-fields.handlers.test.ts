@@ -12,6 +12,8 @@ const { createQuickbooksInvoice } = await import('../../../src/handlers/create-q
 describe('Create Invoice Handler - template fields', () => {
   beforeEach(() => {
     resetAllMocks();
+    // The duplicate check runs first; have it find nothing so the create path is exercised.
+    mockQuickBooksInstance.findInvoices.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
   });
 
   it('should map customer_memo, sales_term_ref and bill_email to QBO properties', async () => {
