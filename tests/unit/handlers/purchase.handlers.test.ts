@@ -31,6 +31,8 @@ const attachment = {
 beforeEach(() => {
   resetAllMocks();
   resetUploadMock();
+  // Default: the duplicate check finds nothing, so the create path runs as before.
+  mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
 });
 
 describe('createQuickbooksPurchase', () => {
@@ -127,5 +129,69 @@ describe('createQuickbooksPurchase with an attachment', () => {
     );
     expect(mockQuickBooksInstance.createPurchase).not.toHaveBeenCalled();
     expect(mockHttpsRequest).not.toHaveBeenCalled();
+    expect(mockQuickBooksInstance.findPurchases).not.toHaveBeenCalled();
+  });
+});
+
+describe('createQuickbooksPurchase duplicate guard', () => {
+  const existing = {
+    Id: '300',
+    PaymentType: 'CreditCard',
+    AccountRef: { value: '42', name: 'Visa' },
+    TxnDate: '2026-11-05',
+    TotalAmt: 99.19,
+    Line: [{ Amount: 86.25, DetailType: 'AccountBasedExpenseLineDetail' }],
+  };
+
+  it('refuses when a matching purchase exists, without creating', async () => {
+    mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) =>
+      cb(null, { QueryResponse: { Purchase: [existing] } })
+    );
+
+    const result = await createQuickbooksPurchase(purchase);
+
+    expect(result).toEqual({
+      result: null,
+      isError: true,
+      error:
+        'Possible duplicate — Purchase already exists: Id 300, #n/a, $99.19, 2026-11-05, account Visa. ' +
+        'Pass allow_duplicate: true to create anyway.',
+    });
+    expect(mockQuickBooksInstance.createPurchase).not.toHaveBeenCalled();
+  });
+
+  it('refuses before uploading anything when an attachment was given', async () => {
+    mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) =>
+      cb(null, { QueryResponse: { Purchase: [existing] } })
+    );
+
+    const result = await createQuickbooksPurchase(purchase, attachment);
+
+    expect(result.isError).toBe(true);
+    expect(mockQuickBooksInstance.createPurchase).not.toHaveBeenCalled();
+    expect(mockHttpsRequest).not.toHaveBeenCalled();
+  });
+
+  it('skips the check entirely when allow_duplicate is true, and still sends the purchase unchanged', async () => {
+    mockQuickBooksInstance.createPurchase.mockImplementation((_payload: any, cb: any) => cb(null, created));
+
+    const result = await createQuickbooksPurchase(purchase, undefined, true);
+
+    expect(result).toEqual({ result: created, isError: false, error: null });
+    expect(mockQuickBooksInstance.findPurchases).not.toHaveBeenCalled();
+    expect(mockQuickBooksInstance.createPurchase.mock.calls[0][0]).toBe(purchase);
+  });
+
+  it('refuses (fails closed) when the duplicate check errors', async () => {
+    mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) => cb(new Error('QBO down'), null));
+
+    const result = await createQuickbooksPurchase(purchase);
+
+    expect(result).toEqual({
+      result: null,
+      isError: true,
+      error: 'Duplicate check failed: Error: QBO down. Retry, or pass allow_duplicate: true.',
+    });
+    expect(mockQuickBooksInstance.createPurchase).not.toHaveBeenCalled();
   });
 });

@@ -6,16 +6,19 @@ import {
   base64AttachmentProblem,
   type NewRecordAttachment,
 } from "../helpers/attachable-upload.js";
+import { findDuplicatePurchase, describeHit } from "../helpers/duplicate-guard.js";
 
 /**
  * Create a purchase in QuickBooks Online. With `attachment`, the file is uploaded and linked to
  * the new purchase afterwards; the outcome is returned as the purchase's `_attachment`, and the
  * call succeeds even when only the upload fails, because the purchase exists.
+ * Unless `allowDuplicate`, a likely duplicate (see findDuplicatePurchase) is refused before creating.
  * @param purchaseData The purchase object to create
  */
 export async function createQuickbooksPurchase(
   purchaseData: any,
-  attachment?: NewRecordAttachment
+  attachment?: NewRecordAttachment,
+  allowDuplicate = false
 ): Promise<ToolResponse<any>> {
   try {
     // An attachment that can never upload (unsupported type, over 100 MB) is refused before
@@ -30,6 +33,26 @@ export async function createQuickbooksPurchase(
     }
 
     const quickbooks = await QuickbooksClient.getInstance();
+
+    if (!allowDuplicate) {
+      let hit: any;
+      try {
+        hit = await findDuplicatePurchase(quickbooks, purchaseData);
+      } catch (e) {
+        return {
+          result: null,
+          isError: true,
+          error: `Duplicate check failed: ${formatError(e)}. Retry, or pass allow_duplicate: true.`,
+        };
+      }
+      if (hit) {
+        return {
+          result: null,
+          isError: true,
+          error: "Possible duplicate — " + describeHit("Purchase", hit) + " Pass allow_duplicate: true to create anyway.",
+        };
+      }
+    }
 
     const purchase = await new Promise<any>((resolve, reject) => {
       quickbooks.createPurchase(purchaseData, (err: any, created: any) => (err ? reject(err) : resolve(created)));

@@ -30,9 +30,15 @@ describe('create_purchase schema', () => {
     expect(CreatePurchaseTool.schema.safeParse({ purchase, attachment: { ...attachment, file_name: '' } }).success).toBe(false);
   });
 
-  it('mentions the attachment in the description', () => {
+  it('accepts allow_duplicate next to the purchase, and only as a boolean', () => {
+    expect(CreatePurchaseTool.schema.safeParse({ purchase, allow_duplicate: false }).success).toBe(true);
+    expect(CreatePurchaseTool.schema.safeParse({ purchase, allow_duplicate: 1 }).success).toBe(false);
+  });
+
+  it('mentions the duplicate check and the attachment in the description', () => {
     expect(CreatePurchaseTool.description).toBe(
-      'Create a purchase in QuickBooks Online. Optional attachment uploads a base64 file and links it; the response includes _attachment.'
+      'Create a purchase in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true. ' +
+        'Optional attachment uploads a base64 file and links it; the response includes _attachment.'
     );
   });
 });
@@ -42,6 +48,8 @@ describe('create_purchase tool handler', () => {
     resetAllMocks();
     resetUploadMock();
     mockQuickBooksInstance.createPurchase.mockImplementation((_payload: any, cb: any) => cb(null, created));
+    // Default: the duplicate check finds nothing.
+    mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
   });
 
   it('prints the same two lines as before when there is no attachment', async () => {
@@ -84,5 +92,31 @@ describe('create_purchase tool handler', () => {
 
     expect(res.content).toEqual([{ type: 'text', text: 'Error creating purchase: Error: Bad account' }]);
     expect(mockHttpsRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports a likely duplicate as an error, and creates nothing', async () => {
+    const existing = { Id: '8', PaymentType: 'Cash', AccountRef: { value: '35' }, TotalAmt: 0, TxnDate: '2026-11-05', Line: [] };
+    mockQuickBooksInstance.findPurchases.mockImplementation((_c: any, cb: any) =>
+      cb(null, { QueryResponse: { Purchase: [existing] } })
+    );
+
+    const res = await run({ purchase });
+
+    expect(res.content).toEqual([
+      {
+        type: 'text',
+        text:
+          'Error creating purchase: Possible duplicate — Purchase already exists: Id 8, #n/a, $0, 2026-11-05, account 35. ' +
+          'Pass allow_duplicate: true to create anyway.',
+      },
+    ]);
+    expect(mockQuickBooksInstance.createPurchase).not.toHaveBeenCalled();
+  });
+
+  it('passes allow_duplicate through, so the check is skipped and the purchase created', async () => {
+    const res = await run({ purchase, allow_duplicate: true });
+
+    expect(mockQuickBooksInstance.findPurchases).not.toHaveBeenCalled();
+    expect(res.content[0]).toEqual({ type: 'text', text: 'Purchase created:' });
   });
 });
