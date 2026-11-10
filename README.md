@@ -210,11 +210,12 @@ Complete CRUD operations are available for all entity types:
 
 | Tool | Description |
 |------|-------------|
-| `create_bill` | Create a new bill |
+| `create-bill` | Create a new bill. Optional `attachment` (base64 file) is uploaded and linked in the same call; the result's `_attachment` holds `attachable_id`, or `error` if the bill was created but the upload failed |
 | `get_bill` | Get bill by ID |
 | `update_bill` | Update bill details |
 | `delete_bill` | Delete a bill |
 | `search_bills` | Search bills with filters |
+| `create_purchase` | Create a purchase (expense). Optional `attachment` (base64 file) is uploaded and linked in the same call; the result's `_attachment` holds `attachable_id`, or `error` if the purchase was created but the upload failed |
 | `create_vendor` | Create a new vendor |
 | `get_vendor` | Get vendor by ID |
 | `update_vendor` | Update vendor details |

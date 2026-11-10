@@ -464,6 +464,24 @@ describe('Company and Attachable Handlers', () => {
       expect(result.error).toMatch(/QBO upload failed/);
     });
 
+    it('should treat a 200 with a per-file Fault in AttachableResponse as an error', async () => {
+      mockHttpsUploadResponse(200, {
+        AttachableResponse: [
+          { Fault: { Error: [{ Message: 'Invalid Reference Id', code: '2500', element: 'AttachableRef' }], type: 'ValidationFault' } },
+        ],
+      });
+
+      const result = await createQuickbooksAttachable({
+        file_name: 'doc.pdf',
+        content_type: 'application/pdf',
+        base64_content: Buffer.from('x').toString('base64'),
+        attachable_ref: { entity_ref_type: 'Bill', entity_ref_value: '404' },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.error).toBe('Error: Invalid Reference Id (QBO code 2500, element AttachableRef)');
+    });
+
     it('should not call /upload when base64_content is omitted (metadata-only path)', async () => {
       mockQuickBooksInstance.createAttachable.mockImplementation((_payload: any, cb: any) =>
         cb(null, { Id: '1', FileName: 'metadata-only.pdf' })
