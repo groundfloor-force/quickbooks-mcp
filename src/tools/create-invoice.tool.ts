@@ -3,7 +3,8 @@ import { ToolDefinition } from "../types/tool-definition.js";
 import { z } from "zod";
 
 const toolName = "create_invoice";
-const toolDescription = "Create an invoice in QuickBooks Online.";
+const toolDescription =
+  "Create an invoice in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true.";
 
 const lineItemSchema = z.object({
   item_ref: z.string().min(1),
@@ -54,6 +55,7 @@ const toolSchema = z.object({
     .min(1)
     .optional()
     .describe("Billing email address (QBO BillEmail). Falls back to the customer default if omitted"),
+  allow_duplicate: z.boolean().optional().describe("Skip the duplicate check and create anyway"),
 });
 
 const toolHandler = async ({ params }: any) => {

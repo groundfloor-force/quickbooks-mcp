@@ -12,6 +12,8 @@ const { createQuickbooksInvoice } = await import('../../../src/handlers/create-q
 describe('Create Invoice Handler - LinkedTxn', () => {
   beforeEach(() => {
     resetAllMocks();
+    // The duplicate check runs first; have it find nothing so the create path is exercised.
+    mockQuickBooksInstance.findInvoices.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
   });
 
   it('should create an invoice with LinkedTxn when linked_txn is provided', async () => {

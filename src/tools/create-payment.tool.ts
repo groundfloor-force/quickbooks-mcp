@@ -3,7 +3,8 @@ import { ToolDefinition } from "../types/tool-definition.js";
 import { z } from "zod";
 
 const toolName = "create_payment";
-const toolDescription = "Create a payment (receive money from customer) in QuickBooks Online.";
+const toolDescription =
+  "Create a payment (receive money from customer) in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true.";
 
 const linkedTxnSchema = z.object({
   txn_id: z.string().describe("Transaction ID to apply payment to"),
@@ -26,6 +27,7 @@ const toolSchema = z.object({
   currency_ref: z.string().optional().describe("Reference to the currency (e.g. USD, GBP) in which all amounts on the payment are expressed. Required if multicurrency is enabled for the company (CurrencyRef)"),
   exchange_rate: z.number().positive().optional().describe("The number of home-currency units it takes to equal one unit of the currency specified by currency_ref. Applicable if multicurrency is enabled for the company (ExchangeRate)"),
   line: z.array(lineSchema).optional().describe("Line items linking to invoices"),
+  allow_duplicate: z.boolean().optional().describe("Skip the duplicate check and create anyway"),
 });
 
 const toolHandler = async ({ params }: any) => {

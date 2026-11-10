@@ -20,6 +20,13 @@ describe('Payment Handlers', () => {
   });
 
   describe('createQuickbooksPayment', () => {
+    // Default: the duplicate check finds nothing, so the create path runs as before.
+    beforeEach(() => {
+      (mockQuickBooksInstance.findPayments as jest.Mock).mockImplementation(
+        (_c: any, cb: any) => cb(null, { QueryResponse: {} })
+      );
+    });
+
     it('should create a payment successfully', async () => {
       const mockPayment = { Id: '123', TotalAmt: 100 };
       (mockQuickBooksInstance.createPayment as jest.Mock).mockImplementation(
@@ -115,6 +122,85 @@ describe('Payment Handlers', () => {
       expect(capturedPayload).not.toHaveProperty('PaymentRefNum');
       expect(capturedPayload).not.toHaveProperty('CurrencyRef');
       expect(capturedPayload).not.toHaveProperty('ExchangeRate');
+    });
+
+    describe('duplicate guard', () => {
+      const input = { customer_ref: 'cust-1', total_amt: 100, txn_date: '2026-11-05', payment_ref_num: 'EFT-1' };
+
+      it('refuses when a matching payment exists, without creating', async () => {
+        (mockQuickBooksInstance.findPayments as jest.Mock).mockImplementation((_c: any, cb: any) =>
+          cb(null, { QueryResponse: { Payment: [{ Id: '55', PaymentRefNum: 'EFT-1', TotalAmt: 100, TxnDate: '2026-11-05', CustomerRef: { value: 'cust-1' } }] } })
+        );
+
+        const result = await createQuickbooksPayment(input);
+
+        expect(result.isError).toBe(true);
+        expect(result.error).toBe(
+          'Possible duplicate — Payment already exists: Id 55, #EFT-1, $100, 2026-11-05, customer cust-1. Pass allow_duplicate: true to create anyway.'
+        );
+        expect(mockQuickBooksInstance.createPayment).not.toHaveBeenCalled();
+      });
+
+      it('creates with an unchanged payload when no duplicate is found', async () => {
+        (mockQuickBooksInstance.createPayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { Id: '56' }));
+
+        const result = await createQuickbooksPayment(input);
+
+        expect(result.isError).toBe(false);
+        expect((mockQuickBooksInstance.findPayments as jest.Mock).mock.calls[0][0]).toEqual([
+          { field: 'CustomerRef', value: 'cust-1', operator: '=' },
+          { field: 'TxnDate', value: '2026-11-05', operator: '=' },
+          { field: 'limit', value: 50 },
+        ]);
+        expect((mockQuickBooksInstance.createPayment as jest.Mock).mock.calls[0][0]).toStrictEqual({
+          CustomerRef: { value: 'cust-1' },
+          TotalAmt: 100,
+          TxnDate: '2026-11-05',
+          PaymentRefNum: 'EFT-1',
+        });
+      });
+
+      it('creates the 4th of four same-day, same-amount payments when each pays a different invoice', async () => {
+        // Four $287.50 payments on Oct 7 for four invoices; three are already in QBO.
+        const existing = ['501', '502', '503'].map((inv, i) => ({
+          Id: `6${i + 1}`, TotalAmt: 287.5, TxnDate: '2026-10-07', CustomerRef: { value: 'cust-1' },
+          Line: [{ Amount: 287.5, LinkedTxn: [{ TxnId: inv, TxnType: 'Invoice' }] }],
+        }));
+        (mockQuickBooksInstance.findPayments as jest.Mock).mockImplementation((_c: any, cb: any) =>
+          cb(null, { QueryResponse: { Payment: existing } })
+        );
+        (mockQuickBooksInstance.createPayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { Id: '64' }));
+
+        const result = await createQuickbooksPayment({
+          customer_ref: 'cust-1',
+          total_amt: 287.5,
+          txn_date: '2026-10-07',
+          line: [{ amount: 287.5, linked_txn: [{ txn_id: '504', txn_type: 'Invoice' }] }],
+        });
+
+        expect(result.isError).toBe(false);
+        expect(mockQuickBooksInstance.createPayment).toHaveBeenCalledTimes(1);
+      });
+
+      it('skips the check entirely when allow_duplicate is true', async () => {
+        (mockQuickBooksInstance.createPayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { Id: '57' }));
+
+        const result = await createQuickbooksPayment({ ...input, allow_duplicate: true });
+
+        expect(result.isError).toBe(false);
+        expect(mockQuickBooksInstance.findPayments).not.toHaveBeenCalled();
+        expect((mockQuickBooksInstance.createPayment as jest.Mock).mock.calls[0][0]).not.toHaveProperty('allow_duplicate');
+      });
+
+      it('refuses (fails closed) when the duplicate check errors', async () => {
+        (mockQuickBooksInstance.findPayments as jest.Mock).mockImplementation((_c: any, cb: any) => cb(new Error('QBO down'), null));
+
+        const result = await createQuickbooksPayment(input);
+
+        expect(result.isError).toBe(true);
+        expect(result.error).toBe('Duplicate check failed: Error: QBO down. Retry, or pass allow_duplicate: true.');
+        expect(mockQuickBooksInstance.createPayment).not.toHaveBeenCalled();
+      });
     });
   });
 
