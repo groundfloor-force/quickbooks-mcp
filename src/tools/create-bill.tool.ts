@@ -3,7 +3,8 @@ import { ToolDefinition } from "../types/tool-definition.js";
 import { z } from "zod";
 
 const toolName = "create-bill";
-const toolDescription = "Create a bill in QuickBooks Online.";
+const toolDescription =
+  "Create a bill in QuickBooks Online. Optional attachment uploads a base64 file and links it; the response includes _attachment.";
 
 const refSchema = z.object({
   value: z.string(),
@@ -45,10 +46,17 @@ const toolSchema = z.object({
     Balance: z.number().optional(),
     TotalAmt: z.number().optional(),
   }).passthrough(),
+  attachment: z.object({
+    file_name: z.string().min(1),
+    base64_content: z.string().min(1),
+    content_type: z.string().optional().describe("Inferred from file_name if omitted"),
+    note: z.string().optional(),
+    include_on_send: z.boolean().optional(),
+  }).optional().describe("Upload this file and link it to the new record in the same call. Returns attachable_id."),
 });
 
 const toolHandler = async (args: { [x: string]: any }) => {
-  const response = await createQuickbooksBill(args.params.bill);
+  const response = await createQuickbooksBill(args.params.bill, args.params.attachment);
   if (response.isError) {
     return {
       content: [
@@ -60,8 +68,17 @@ const toolHandler = async (args: { [x: string]: any }) => {
     };
   }
   const bill = response.result;
+  // With an attachment, lead with its outcome: the ids, or a warning that the bill exists
+  // without its file.
+  const attached = bill._attachment;
+  const lead = attached?.error
+    ? `WARNING: ${attached.error}`
+    : attached?.attachable_id
+      ? `Bill created: Id ${bill.Id}, attachment ${attached.attachable_id}`
+      : undefined;
   return {
     content: [
+      ...(lead ? [{ type: "text" as const, text: lead }] : []),
       {
         type: "text" as const,
         text: JSON.stringify(bill),

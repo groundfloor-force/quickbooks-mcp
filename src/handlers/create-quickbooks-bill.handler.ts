@@ -1,12 +1,29 @@
 import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import {
+  attachToNewRecord,
+  base64AttachmentProblem,
+  type NewRecordAttachment,
+} from "../helpers/attachable-upload.js";
 
 /**
- * Create a bill in QuickBooks Online
+ * Create a bill in QuickBooks Online. With `attachment`, the file is uploaded and linked to the
+ * new bill afterwards; the outcome is returned as the bill's `_attachment`, and the call
+ * succeeds even when only the upload fails, because the bill exists.
  */
-export async function createQuickbooksBill(bill: any): Promise<ToolResponse<any>> {
+export async function createQuickbooksBill(
+  bill: any,
+  attachment?: NewRecordAttachment
+): Promise<ToolResponse<any>> {
   try {
+    // An attachment that can never upload (unsupported type, over 100 MB) is refused before
+    // the bill is created, so the caller can fix it and retry without a duplicate bill.
+    const problem = attachment && base64AttachmentProblem(attachment);
+    if (problem) {
+      return { result: null, isError: true, error: `Attachment rejected, so no bill was created: ${problem}` };
+    }
+
     const quickbooks = await QuickbooksClient.getInstance();
 
     // Auto-nest flat line items into QBO's expected nested structure.
@@ -28,23 +45,16 @@ export async function createQuickbooksBill(bill: any): Promise<ToolResponse<any>
       }),
     };
 
-    return new Promise((resolve) => {
-      quickbooks.createBill(reshapedBill, (err: any, createdBill: any) => {
-        if (err) {
-          resolve({
-            result: null,
-            isError: true,
-            error: formatError(err),
-          });
-        } else {
-          resolve({
-            result: createdBill,
-            isError: false,
-            error: null,
-          });
-        }
-      });
+    const createdBill = await new Promise<any>((resolve, reject) => {
+      quickbooks.createBill(reshapedBill, (err: any, created: any) => (err ? reject(err) : resolve(created)));
     });
+
+    if (!attachment) {
+      return { result: createdBill, isError: false, error: null };
+    }
+    // attachToNewRecord never throws, so nothing after the create can report it as failed.
+    const _attachment = await attachToNewRecord("Bill", createdBill.Id, attachment);
+    return { result: { ...createdBill, _attachment }, isError: false, error: null };
   } catch (error) {
     return {
       result: null,

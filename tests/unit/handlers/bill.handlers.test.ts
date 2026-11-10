@@ -1,10 +1,16 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { mockQuickbooksClient, mockQuickbooksClientClass, mockQuickBooksInstance, resetAllMocks } from '../../mocks/quickbooks.mock';
+import { mockHttpsRequest, mockUploadResponse, resetUploadMock, uploadedMetadata, uploadSuccess } from '../../mocks/https-upload.mock';
 
 // ESM-compatible module mocking
 jest.unstable_mockModule('../../../src/clients/quickbooks-client', () => ({
   quickbooksClient: mockQuickbooksClient,
   QuickbooksClient: mockQuickbooksClientClass,
+}));
+// The optional attachment is uploaded through a raw https request to QBO's /upload.
+jest.unstable_mockModule('https', () => ({
+  default: { request: mockHttpsRequest },
+  request: mockHttpsRequest,
 }));
 
 // Dynamic imports after mock setup
@@ -17,6 +23,7 @@ const { searchQuickbooksBills } = await import('../../../src/handlers/search-qui
 describe('Bill Handlers', () => {
   beforeEach(() => {
     resetAllMocks();
+    resetUploadMock();
   });
 
   describe('createQuickbooksBill', () => {
@@ -73,6 +80,86 @@ describe('Bill Handlers', () => {
 
       expect(result.isError).toBe(true);
       expect(result.error).toContain('Error: Auth failed');
+    });
+  });
+
+  describe('createQuickbooksBill with an attachment', () => {
+    const bill = { Line: [{ Amount: 500, DetailType: 'AccountBasedExpenseLineDetail', AccountRef: { value: '1' } }], VendorRef: { value: '56' } };
+    const attachment = {
+      file_name: 'invoice-1042.pdf',
+      base64_content: Buffer.from('%PDF-1.4 fake').toString('base64'),
+      include_on_send: false,
+    };
+    const created = { Id: '1', SyncToken: '0', TotalAmt: 500 };
+
+    it('returns the created bill object itself and uploads nothing when no attachment is given', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_payload: any, cb: any) => cb(null, created));
+
+      const result = await createQuickbooksBill(bill);
+
+      expect(result).toEqual({ result: created, isError: false, error: null });
+      expect(result.result).toBe(created);
+      expect(mockHttpsRequest).not.toHaveBeenCalled();
+    });
+
+    it('creates the bill, then uploads the file linked to it and returns the attachable id', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_payload: any, cb: any) => cb(null, created));
+      mockUploadResponse(200, uploadSuccess('99', 'invoice-1042.pdf'));
+
+      const result = await createQuickbooksBill(bill, attachment);
+
+      expect(mockQuickBooksInstance.createBill).toHaveBeenCalledTimes(1);
+      expect(mockHttpsRequest).toHaveBeenCalledTimes(1);
+      expect(mockQuickBooksInstance.createBill.mock.invocationCallOrder[0]).toBeLessThan(
+        mockHttpsRequest.mock.invocationCallOrder[0]
+      );
+      expect(uploadedMetadata().AttachableRef).toEqual([
+        { EntityRef: { type: 'Bill', value: '1' }, IncludeOnSend: false },
+      ]);
+      expect(result.isError).toBe(false);
+      expect(result.result).toEqual({ ...created, _attachment: { attachable_id: '99' } });
+    });
+
+    it('still succeeds, with the bill and an _attachment.error, when the upload fails', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_payload: any, cb: any) => cb(null, created));
+      mockUploadResponse(500, 'upstream down');
+
+      const result = await createQuickbooksBill(bill, attachment);
+
+      expect(result.isError).toBe(false);
+      expect(result.result.Id).toBe('1');
+      expect(result.result._attachment.attachable_id).toBeUndefined();
+      expect(result.result._attachment.error).toBe(
+        'Bill 1 was created but the attachment failed: Error: QBO upload failed (500): QBO server error. ' +
+          'Attach it with create_attachable (entity_ref_type Bill, entity_ref_value 1).'
+      );
+    });
+
+    it('does not attempt the upload when the create fails', async () => {
+      mockQuickBooksInstance.createBill.mockImplementation((_payload: any, cb: any) =>
+        cb(new Error('Business Validation Error'), null)
+      );
+
+      const result = await createQuickbooksBill(bill, attachment);
+
+      expect(result).toEqual({ result: null, isError: true, error: 'Error: Business Validation Error' });
+      expect(mockHttpsRequest).not.toHaveBeenCalled();
+    });
+
+    it('refuses an attachment that could never upload before creating anything', async () => {
+      const result = await createQuickbooksBill(bill, { file_name: 'sketch.psd', base64_content: 'eA==' });
+
+      expect(result.isError).toBe(true);
+      expect(result.error).toBe(
+        'Attachment rejected, so no bill was created: Unsupported content_type "application/octet-stream". ' +
+          'Allowed: application/msword, application/pdf, application/postscript, application/vnd.ms-excel, ' +
+          'application/vnd.oasis.opendocument.spreadsheet, ' +
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, ' +
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document, image/gif, image/jpeg, ' +
+          'image/jpg, image/png, image/tif, text/csv, text/plain, text/rtf, text/xml'
+      );
+      expect(mockQuickBooksInstance.createBill).not.toHaveBeenCalled();
+      expect(mockHttpsRequest).not.toHaveBeenCalled();
     });
   });
 
