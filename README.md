@@ -185,6 +185,7 @@ Complete CRUD operations are available for all entity types:
 | `create_invoice` | Create a new invoice |
 | `get_invoice` | Get invoice by ID |
 | `update_invoice` | Update invoice details |
+| `void_invoice` | Void an invoice (stays in the books at $0); refuses one with payments applied unless `allow_paid` |
 | `delete_invoice` | Delete/void an invoice |
 | `search_invoices` | Search invoices with filters |
 | `get_invoice_pdf` | Download an invoice as a PDF (inline base64, or to disk when `QBO_PDF_OUTPUT_DIR` is set) |
@@ -553,6 +554,7 @@ All tool names must follow the `{verb}_{entity}` convention using underscores. T
 | `create_` | WRITE | `QUICKBOOKS_DISABLE_WRITE=true` |
 | `update_` | UPDATE | `QUICKBOOKS_DISABLE_UPDATE=true` |
 | `delete_` | DELETE | `QUICKBOOKS_DISABLE_DELETE=true` |
+| `void_` | VOID | `QUICKBOOKS_DISABLE_VOID=true` |
 | `get_`, `search_`, `read_` | READ | never |
 
 New tools that do not follow this convention will not be correctly categorised and may appear or be suppressed unexpectedly.
