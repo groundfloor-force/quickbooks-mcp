@@ -2,6 +2,7 @@ import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
 import { findDuplicateInvoice, describeHit } from "../helpers/duplicate-guard.js";
+import { createLinesTotalCents, belowZeroError } from "../helpers/invoice-total.js";
 
 export interface CreateInvoiceInput {
   customer_ref: string; // customer id
@@ -65,6 +66,10 @@ function normalizeInvoiceFields(obj: Record<string, any>): Record<string, any> {
 }
 
 export async function createQuickbooksInvoice(data: CreateInvoiceInput): Promise<ToolResponse<any>> {
+  // Lines may be negative or zero; the invoice total may not be below zero. Checked before any QBO call.
+  const belowZero = belowZeroError(createLinesTotalCents(data.line_items));
+  if (belowZero) return { result: null, isError: true, error: belowZero };
+
   try {
     const quickbooks = await QuickbooksClient.getInstance();
 
