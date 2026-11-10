@@ -19,6 +19,10 @@
  *   /authorize /token /register /revoke            -> OAuth endpoints, PKCE required
  *   GET  /auth/google/callback                     -> Google redirects here
  *   POST|GET|DELETE /mcp                           -> MCP, Bearer token required
+ *
+ * The Bearer token on /mcp is either an access token from the Google sign-in above, or a
+ * SERVICE_KEYS key for a non-interactive client (./auth/service-keys.ts). With SERVICE_KEYS unset,
+ * only the Google sign-in exists and nothing below differs.
  */
 
 import express, { type Request, type Response } from "express";
@@ -36,6 +40,13 @@ import { loadAuthConfig, type AuthConfig } from "./auth/config.js";
 import { GoogleBackedOAuthProvider } from "./auth/provider.js";
 import { loadAuthStore, resolveAuthStorePath, startExpirySweep } from "./auth/store.js";
 import { emailFromAuthInfo } from "./auth/tokens.js";
+import {
+  buildMcpVerifier,
+  describeServiceKeys,
+  enforceServiceKeyScope,
+  parseServiceKeys,
+  type ServiceKey,
+} from "./auth/service-keys.js";
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
@@ -208,6 +219,16 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
+  // Optional bearer keys for non-interactive clients. Unset = off. A malformed value (a key under
+  // 32 characters, an unknown scope, a duplicate) refuses to start; the message never holds a key.
+  let serviceKeys: ServiceKey[];
+  try {
+    serviceKeys = parseServiceKeys(process.env.SERVICE_KEYS);
+  } catch (error) {
+    console.error(`[qbo-mcp] ${(error as Error).message}`);
+    process.exit(1);
+  }
+
   // Registered clients and refresh tokens, restored so a redeploy does not
   // disconnect every MCP client. Resolved BEFORE configureTokenStore fills in its
   // default QUICKBOOKS_TOKEN_STORE_PATH, which would otherwise mask the case
@@ -279,7 +300,12 @@ const main = async (): Promise<void> => {
   // Where Google sends the user back after sign-in.
   app.get("/auth/google/callback", provider.handleGoogleCallback);
 
-  const requireAuth = requireBearerAuth({ verifier: provider, resourceMetadataUrl });
+  // The ONE place service keys enter: they are checked first, and any other token goes to the
+  // Google-backed provider exactly as before. With no keys, the verifier IS the provider.
+  const requireAuth = requireBearerAuth({
+    verifier: buildMcpVerifier(serviceKeys, provider),
+    resourceMetadataUrl,
+  });
 
   // Expose the headers a browser-based MCP client needs to read. The SDK's own
   // OAuth handlers already apply CORS to their routes.
@@ -317,6 +343,8 @@ const main = async (): Promise<void> => {
     mcpCors,
     requireAuth,
     express.json({ limit: MAX_BODY_BYTES }),
+    // A read-only service key calling a tool outside search_/get_/read_ stops here (403).
+    enforceServiceKeyScope,
     async (req: Request, res: Response) => {
       const email = emailFromAuthInfo(req.auth);
       logToolCalls(email, req.body);
@@ -406,6 +434,7 @@ const main = async (): Promise<void> => {
     console.log(`[qbo-mcp] RS metadata:     ${resourceMetadataUrl}`);
     console.log(`[qbo-mcp] Google callback: ${config.googleRedirectUri}`);
     console.log(`[qbo-mcp] Allow-list:      ${config.allowedEmails.size} address(es)`);
+    console.log(`[qbo-mcp] Service keys:    ${describeServiceKeys(serviceKeys)}`);
   });
 
   const shutdown = (signal: string) => {
