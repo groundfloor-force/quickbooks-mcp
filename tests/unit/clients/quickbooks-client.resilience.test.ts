@@ -107,7 +107,7 @@ jest.unstable_mockModule('fs', () => ({
   },
 }));
 
-const { QuickbooksClient } = await import('../../../src/clients/quickbooks-client');
+const { QuickbooksClient, quickbooksClient } = await import('../../../src/clients/quickbooks-client');
 
 function makeClient(overrides: Partial<{ environment: string; refreshToken: string }> = {}) {
   return new QuickbooksClient({
@@ -355,5 +355,78 @@ describe('sandbox transient handling', () => {
     ]);
     expect(started).toBe(true);
     expect(serverCreated).toBe(true);
+  });
+});
+
+// Shutdown waits on this so the process never exits between Intuit rotating the refresh
+// token and the rotated value being persisted. It runs against the module's singleton.
+describe('QuickbooksClient.waitForRefresh', () => {
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  /** Tracks whether waitForRefresh() has resolved, without awaiting it. */
+  function watch(promise: Promise<void>) {
+    const state = { settled: false };
+    void promise.then(() => {
+      state.settled = true;
+    });
+    return state;
+  }
+
+  it('resolves immediately when no refresh is in flight', async () => {
+    const wait = watch(QuickbooksClient.waitForRefresh());
+    await tick();
+    expect(wait.settled).toBe(true);
+    expect(refreshDispatch).not.toHaveBeenCalled();
+  });
+
+  it('resolves only after a pending refresh settles', async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    refreshDispatch.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+
+    const refresh = quickbooksClient.refreshAccessToken();
+    const wait = watch(QuickbooksClient.waitForRefresh());
+    await tick();
+    expect(wait.settled).toBe(false);
+
+    finish({ token: { access_token: 'warm', expires_in: 3600 } });
+    await refresh;
+    await tick();
+    expect(wait.settled).toBe(true);
+  });
+
+  it('resolves, never rejects, when the pending refresh fails', async () => {
+    let fail: (reason: unknown) => void = () => undefined;
+    refreshDispatch.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+
+    const refresh = quickbooksClient.refreshAccessToken();
+    // The refresh's own caller sees the failure; handled up front so it is never unhandled.
+    const refreshOutcome = expect(refresh).rejects.toThrow(/Failed to refresh Quickbooks token/);
+    const wait = QuickbooksClient.waitForRefresh();
+    fail(transientError(503));
+
+    await expect(wait).resolves.toBeUndefined();
+    await refreshOutcome;
+  });
+});
+
+describe('process-level uncaughtException handler', () => {
+  it('logs the error and exits 1 so the platform restarts a clean process', () => {
+    const handler = process
+      .listeners('uncaughtException')
+      .find((listener) => String(listener).includes('[auth-server] uncaughtException'));
+    expect(handler).toBeDefined();
+
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const processExit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const boom = new Error('boom');
+      (handler as (err: Error) => void)(boom);
+
+      expect(consoleError).toHaveBeenCalledWith('[auth-server] uncaughtException:', boom);
+      expect(processExit).toHaveBeenCalledWith(1);
+    } finally {
+      consoleError.mockRestore();
+      processExit.mockRestore();
+    }
   });
 });
