@@ -477,6 +477,10 @@ and let the service redeploy, only when that client is meant to write.
 2. Switch the client to the new key.
 3. Remove the old entry.
 
+### Deploy
+
+On SIGTERM the remote server's graceful shutdown waits for an in-flight token refresh, 10s max. Railway starts it with `node dist/http.js` so the signal reaches node directly.
+
 ---
 
 ## Development
@@ -531,6 +535,8 @@ docs/
 ---
 
 ## Error Handling
+
+Error messages include QBO's fault message, detail, code and element. Email addresses, realm and trace ids, and numbers of 10 or more digits are removed from the detail.
 
 If you encounter connection errors:
 

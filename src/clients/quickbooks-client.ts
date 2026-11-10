@@ -44,6 +44,9 @@ dotenv.config({ path: TOKEN_STORE_PATH, override: true });
 // accumulate duplicate handlers on every OAuth call.
 process.on('uncaughtException', (err) => {
   console.error('[auth-server] uncaughtException:', err);
+  // After an uncaught exception the process state is unknown. Exit so the platform restarts a
+  // clean one (Railway's ON_FAILURE restart policy) rather than serving from a broken state.
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[auth-server] unhandledRejection:', reason);
@@ -662,6 +665,14 @@ export class QuickbooksClient {
     })();
 
     return this.authInFlight;
+  }
+
+  // Resolves once any in-flight token refresh has settled, immediately when there is none.
+  // Shutdown awaits this so the process never exits between Intuit rotating the refresh token
+  // and the rotated value being persisted. Never rejects: the refresh's own caller handles its
+  // failure.
+  static async waitForRefresh(): Promise<void> {
+    await quickbooksClient.refreshInFlight?.catch(() => undefined);
   }
 
   // ── Called by every handler on every request ─────────────────────────────

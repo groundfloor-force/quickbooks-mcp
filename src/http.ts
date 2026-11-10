@@ -47,6 +47,8 @@ import {
   parseServiceKeys,
   type ServiceKey,
 } from "./auth/service-keys.js";
+import { formatError } from "./helpers/format-error.js";
+import { makeShutdown } from "./helpers/shutdown.js";
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/health";
@@ -250,8 +252,10 @@ const main = async (): Promise<void> => {
   let registerAllTools: (
     server: import("@modelcontextprotocol/sdk/server/mcp.js").McpServer
   ) => void;
+  let QuickbooksClient: typeof import("./clients/quickbooks-client.js").QuickbooksClient;
   try {
     ({ registerAllTools } = await import("./register-all-tools.js"));
+    ({ QuickbooksClient } = await import("./clients/quickbooks-client.js"));
   } catch (error) {
     console.error(
       "[qbo-mcp] Failed to load tools. QuickBooks configuration is read from " +
@@ -435,17 +439,21 @@ const main = async (): Promise<void> => {
     console.log(`[qbo-mcp] Google callback: ${config.googleRedirectUri}`);
     console.log(`[qbo-mcp] Allow-list:      ${config.allowedEmails.size} address(es)`);
     console.log(`[qbo-mcp] Service keys:    ${describeServiceKeys(serviceKeys)}`);
+
+    // Warm-up: authenticate now, so the first tool call does not pay for the token refresh and
+    // a dead QuickBooks token shows in the deploy log. A failure is logged, never fatal.
+    void QuickbooksClient.getInstance()
+      .then(() => console.log("[qbo-mcp] Warm-up: QBO client ready"))
+      .catch((error) => console.error(`[qbo-mcp] Warm-up failed: ${formatError(error)}`));
   });
 
-  const shutdown = (signal: string) => {
-    console.log(`[qbo-mcp] ${signal} received, shutting down.`);
-    httpServer.close(() => process.exit(0));
-    for (const session of sessions.values()) {
-      void session.transport.close();
-    }
-  };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  const shutdown = makeShutdown({
+    httpServer,
+    sessions,
+    waitForRefresh: () => QuickbooksClient.waitForRefresh(),
+  });
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 };
 
 main().catch((error) => {
