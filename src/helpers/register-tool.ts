@@ -9,6 +9,7 @@ export const CRUD_CATEGORY = {
   WRITE:  "WRITE",
   UPDATE: "UPDATE",
   DELETE: "DELETE",
+  VOID:   "VOID",
   READ:   "READ",
 } as const;
 
@@ -21,6 +22,7 @@ export const DISABLE_ENV = {
   [CRUD_CATEGORY.WRITE]:  "QUICKBOOKS_DISABLE_WRITE",
   [CRUD_CATEGORY.UPDATE]: "QUICKBOOKS_DISABLE_UPDATE",
   [CRUD_CATEGORY.DELETE]: "QUICKBOOKS_DISABLE_DELETE",
+  [CRUD_CATEGORY.VOID]:   "QUICKBOOKS_DISABLE_VOID",
 } as const;
 
 /** 
@@ -36,6 +38,8 @@ export const PREFIX_CATEGORY_MAP: Record<string, CrudCategory> = {
   "update-": CRUD_CATEGORY.UPDATE,
   "delete_": CRUD_CATEGORY.DELETE,
   "delete-": CRUD_CATEGORY.DELETE,
+  "void_":   CRUD_CATEGORY.VOID,
+  "void-":   CRUD_CATEGORY.VOID,
 };
 
 /** 

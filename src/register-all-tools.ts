@@ -6,6 +6,7 @@ import { RegisterTool } from "./helpers/register-tool.js";
 import { ReadInvoiceTool } from "./tools/read-invoice.tool.js";
 import { SearchInvoicesTool } from "./tools/search-invoices.tool.js";
 import { UpdateInvoiceTool } from "./tools/update-invoice.tool.js";
+import { VoidInvoiceTool } from "./tools/void-invoice.tool.js";
 import { GetInvoicePdfTool } from "./tools/get-invoice-pdf.tool.js";
 import { CreateAccountTool } from "./tools/create-account.tool.js";
 import { UpdateAccountTool } from "./tools/update-account.tool.js";
@@ -207,7 +208,7 @@ import { GetVendorBalanceTool } from "./tools/get-vendor-balance.tool.js";
  * Shared by both entry points — the stdio server (src/index.ts) and the
  * Streamable HTTP server (src/http.ts) — so the tool list is defined exactly
  * once. Individual tools may still be suppressed at registration time by the
- * QUICKBOOKS_DISABLE_WRITE / _UPDATE / _DELETE env vars; that filtering lives
+ * QUICKBOOKS_DISABLE_WRITE / _UPDATE / _DELETE / _VOID env vars; that filtering lives
  * in RegisterTool and applies here unchanged.
  */
 export const registerAllTools = (server: McpServer): void => {
@@ -243,6 +244,7 @@ export const registerAllTools = (server: McpServer): void => {
 
   // Add tool to update invoice
   RegisterTool(server, UpdateInvoiceTool);
+  RegisterTool(server, VoidInvoiceTool);
   RegisterTool(server, DeleteInvoiceTool);
 
   // Add tool to download invoice PDF

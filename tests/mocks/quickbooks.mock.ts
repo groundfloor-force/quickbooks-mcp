@@ -18,6 +18,7 @@ export const mockQuickBooksInstance = {
   getInvoice: jest.fn(),
   updateInvoice: jest.fn(),
   deleteInvoice: jest.fn(),
+  voidInvoice: jest.fn(),
   findInvoices: jest.fn(),
   getInvoicePdf: jest.fn(),
 

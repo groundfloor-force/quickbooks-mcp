@@ -21,6 +21,9 @@ describe("getCrudCategory", () => {
   it("returns UPDATE for update- prefix", () => expect(getCrudCategory("update-vendor")).toBe("UPDATE"));
   it("returns DELETE for delete_ prefix", () => expect(getCrudCategory("delete_payment")).toBe("DELETE"));
   it("returns DELETE for delete- prefix", () => expect(getCrudCategory("delete-bill")).toBe("DELETE"));
+  it("returns VOID for void_ prefix",     () => expect(getCrudCategory("void_invoice")).toBe("VOID"));
+  it("returns VOID for void- prefix",     () => expect(getCrudCategory("void-invoice")).toBe("VOID"));
+  it("still returns DELETE for delete_invoice", () => expect(getCrudCategory("delete_invoice")).toBe("DELETE"));
   it("returns READ for get_ prefix",      () => expect(getCrudCategory("get_invoice")).toBe("READ"));
   it("returns READ for get- prefix",      () => expect(getCrudCategory("get-vendor")).toBe("READ"));
   it("returns READ for search_ prefix",   () => expect(getCrudCategory("search_customers")).toBe("READ"));
@@ -31,13 +34,14 @@ describe("getCrudCategory", () => {
 // Verifies that the correct env var name gates each CRUD category.
 // Uses literal env var names ("QUICKBOOKS_DISABLE_WRITE" etc.) so the test catches any
 // mismatch between the documented env var and what the implementation reads.
-// afterEach deletes all three vars to prevent state leaking between tests.
+// afterEach deletes all four vars to prevent state leaking between tests.
 
 describe("isToolDisabled", () => {
   afterEach(() => {
     delete process.env["QUICKBOOKS_DISABLE_WRITE"];
     delete process.env["QUICKBOOKS_DISABLE_UPDATE"];
     delete process.env["QUICKBOOKS_DISABLE_DELETE"];
+    delete process.env["QUICKBOOKS_DISABLE_VOID"];
   });
 
   // READ tools must never be suppressed regardless of env state.
@@ -66,6 +70,12 @@ describe("isToolDisabled", () => {
   it("returns false for DELETE tool when QUICKBOOKS_DISABLE_DELETE unset",      () => expect(isToolDisabled("delete_payment")).toBe(false));
   it("returns true for hyphen DELETE tool when QUICKBOOKS_DISABLE_DELETE=true", () => { process.env["QUICKBOOKS_DISABLE_DELETE"] = "true"; expect(isToolDisabled("delete-bill")).toBe(true); });
 
+  // VOID — its own switch, independent of DELETE in both directions.
+  it("returns true for VOID tool when QUICKBOOKS_DISABLE_VOID=true",           () => { process.env["QUICKBOOKS_DISABLE_VOID"]   = "true"; expect(isToolDisabled("void_invoice")).toBe(true); });
+  it("returns false for VOID tool when QUICKBOOKS_DISABLE_VOID unset",          () => expect(isToolDisabled("void_invoice")).toBe(false));
+  it("returns false for VOID tool when only QUICKBOOKS_DISABLE_DELETE=true",    () => { process.env["QUICKBOOKS_DISABLE_DELETE"] = "true"; expect(isToolDisabled("void_invoice")).toBe(false); });
+  it("returns false for DELETE tool when only QUICKBOOKS_DISABLE_VOID=true",    () => { process.env["QUICKBOOKS_DISABLE_VOID"]   = "true"; expect(isToolDisabled("delete_invoice")).toBe(false); });
+
   // Boundary: only the exact string "true" disables a tool; other truthy-ish values must not.
   it('returns false when env var is "false"', () => { process.env["QUICKBOOKS_DISABLE_WRITE"] = "false"; expect(isToolDisabled("create_invoice")).toBe(false); });
   it('returns false when env var is "1"',     () => { process.env["QUICKBOOKS_DISABLE_WRITE"] = "1";     expect(isToolDisabled("create_invoice")).toBe(false); });
@@ -82,6 +92,7 @@ describe("RegisterTool", () => {
     delete process.env["QUICKBOOKS_DISABLE_WRITE"];
     delete process.env["QUICKBOOKS_DISABLE_UPDATE"];
     delete process.env["QUICKBOOKS_DISABLE_DELETE"];
+    delete process.env["QUICKBOOKS_DISABLE_VOID"];
   });
 
   const schema = z.object({ id: z.string() });
@@ -117,6 +128,13 @@ describe("RegisterTool", () => {
     process.env["QUICKBOOKS_DISABLE_DELETE"] = "true";
     const server = { tool: jest.fn() } as unknown as McpServer;
     RegisterTool(server, def("delete_payment"));
+    expect(server.tool).not.toHaveBeenCalled();
+  });
+
+  it("skips server.tool() for disabled VOID tool", () => {
+    process.env["QUICKBOOKS_DISABLE_VOID"] = "true";
+    const server = { tool: jest.fn() } as unknown as McpServer;
+    RegisterTool(server, def("void_invoice"));
     expect(server.tool).not.toHaveBeenCalled();
   });
 
