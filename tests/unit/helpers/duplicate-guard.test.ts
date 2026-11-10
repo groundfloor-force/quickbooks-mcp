@@ -174,7 +174,7 @@ describe('findDuplicatePayment', () => {
     expect(hit).toBe(same);
   });
 
-  it('matches linked invoices as a set: order, repeats and txn_type case do not matter, non-invoice links are ignored', async () => {
+  it('matches every linked transaction as a set: order, repeats and txn_type case do not matter', async () => {
     const existing = {
       ...paymentFor('64', 575, ['501', '502']),
       Line: [
@@ -187,10 +187,32 @@ describe('findDuplicatePayment', () => {
 
     const hit = await findDuplicatePayment(qb, {
       customer_ref: '7', total_amt: 575, txn_date: '2026-10-07',
-      line: [{ linked_txn: [{ txn_id: '501', txn_type: 'invoice' }, { txn_id: '502', txn_type: 'Invoice' }, { txn_id: '501', txn_type: 'Invoice' }] }],
+      line: [{
+        linked_txn: [
+          { txn_id: '501', txn_type: 'invoice' },
+          { txn_id: '9', txn_type: 'creditmemo' },
+          { txn_id: '502', txn_type: 'Invoice' },
+          { txn_id: '501', txn_type: 'Invoice' },
+        ],
+      }],
     });
 
     expect(hit).toBe(existing);
+  });
+
+  it('does not match when only a non-invoice link differs: the credit memo counts too', async () => {
+    const existing = {
+      ...paymentFor('65', 575, ['501', '502']),
+      Line: [{ Amount: 575, LinkedTxn: [{ TxnId: '501', TxnType: 'Invoice' }, { TxnId: '502', TxnType: 'Invoice' }, { TxnId: '9', TxnType: 'CreditMemo' }] }],
+    };
+    respondWith([existing]);
+
+    const hit = await findDuplicatePayment(qb, {
+      customer_ref: '7', total_amt: 575, txn_date: '2026-10-07',
+      line: [{ linked_txn: [{ txn_id: '501', txn_type: 'Invoice' }, { txn_id: '502', txn_type: 'Invoice' }] }],
+    });
+
+    expect(hit).toBeNull();
   });
 
   it('does not refuse the same invoices at a different amount', async () => {
@@ -237,6 +259,54 @@ describe('findDuplicatePayment', () => {
     qb.findPayments.mockImplementation((_c: any, cb: any) => cb(null, { QueryResponse: {} }));
 
     const hit = await findDuplicatePayment(qb, { customer_ref: '7', total_amt: 150.25 });
+
+    expect(hit).toBeNull();
+  });
+
+  it('treats $0 payments (credit memo applications) like any other: different invoices are not duplicates', async () => {
+    // A $0 payment applying credit memo 456 to invoice 123 already exists.
+    const applied = paymentFor('67', 0, ['123'], {
+      Line: [
+        { Amount: 0, LinkedTxn: [{ TxnId: '123', TxnType: 'Invoice' }] },
+        { Amount: 50, LinkedTxn: [{ TxnId: '456', TxnType: 'CreditMemo' }] },
+      ],
+    });
+    respondWith([applied]);
+    const zeroFor = (invoiceId: string, creditMemoId: string) => ({
+      customer_ref: '7',
+      total_amt: 0,
+      txn_date: '2026-10-07',
+      line: [
+        { amount: 0, linked_txn: [{ txn_id: invoiceId, txn_type: 'Invoice' }] },
+        { amount: 50, linked_txn: [{ txn_id: creditMemoId, txn_type: 'CreditMemo' }] },
+      ],
+    });
+
+    // Positive control: the same $0 application again is refused, so the check does run on $0.
+    expect(await findDuplicatePayment(qb, zeroFor('123', '456'))).toBe(applied);
+    // A $0 payment applying a credit memo to a different invoice is not a duplicate.
+    expect(await findDuplicatePayment(qb, zeroFor('124', '457'))).toBeNull();
+  });
+
+  it('does not refuse a $0 payment applying a different credit memo to the same invoice', async () => {
+    // Credit memo 456 was applied to invoice 123; now credit memo 457 is applied to it too.
+    const applied = paymentFor('68', 0, ['123'], {
+      Line: [
+        { Amount: 0, LinkedTxn: [{ TxnId: '123', TxnType: 'Invoice' }] },
+        { Amount: 50, LinkedTxn: [{ TxnId: '456', TxnType: 'CreditMemo' }] },
+      ],
+    });
+    respondWith([applied]);
+
+    const hit = await findDuplicatePayment(qb, {
+      customer_ref: '7',
+      total_amt: 0,
+      txn_date: '2026-10-07',
+      line: [
+        { linked_txn: [{ txn_id: '123', txn_type: 'Invoice' }] },
+        { linked_txn: [{ txn_id: '457', txn_type: 'CreditMemo' }] },
+      ],
+    });
 
     expect(hit).toBeNull();
   });
