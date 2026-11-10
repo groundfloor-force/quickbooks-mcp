@@ -18,7 +18,10 @@ const lineSchema = z.object({
 
 const toolSchema = z.object({
   customer_ref: z.string().min(1).describe("Customer ID"),
-  total_amt: z.number().positive().describe("Total payment amount"),
+  total_amt: z
+    .number()
+    .nonnegative()
+    .describe("Total payment amount. 0 is allowed — use it to apply a credit memo to an invoice by linking both in line."),
   payment_method_ref: z.string().optional().describe("Payment method ID"),
   deposit_to_account_ref: z.string().optional().describe("Account to deposit to"),
   txn_date: z.string().optional().describe("Transaction date (YYYY-MM-DD)"),

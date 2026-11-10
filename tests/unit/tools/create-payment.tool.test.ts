@@ -25,6 +25,24 @@ describe('create_payment schema', () => {
     expect(CreatePaymentTool.schema.safeParse({ ...baseParams, allow_duplicate: 'yes' }).success).toBe(false);
   });
 
+  it('accepts a $0 total (QBO uses one to apply a credit memo to an invoice)', () => {
+    const result = CreatePaymentTool.schema.safeParse({ ...baseParams, total_amt: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.total_amt).toBe(0);
+    }
+  });
+
+  it('still rejects a negative total', () => {
+    expect(CreatePaymentTool.schema.safeParse({ ...baseParams, total_amt: -1 }).success).toBe(false);
+  });
+
+  it('tells the caller what a $0 total is for', () => {
+    expect(CreatePaymentTool.schema.shape.total_amt.description).toBe(
+      'Total payment amount. 0 is allowed — use it to apply a credit memo to an invoice by linking both in line.'
+    );
+  });
+
   it('says it refuses duplicates in the description', () => {
     expect(CreatePaymentTool.description).toBe(
       'Create a payment (receive money from customer) in QuickBooks Online. Refuses if a matching record already exists unless allow_duplicate is true.'

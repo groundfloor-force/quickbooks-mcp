@@ -124,6 +124,29 @@ describe('Payment Handlers', () => {
       expect(capturedPayload).not.toHaveProperty('ExchangeRate');
     });
 
+    it('sends a $0 payment applying a credit memo to an invoice exactly as given', async () => {
+      (mockQuickBooksInstance.createPayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { Id: '70' }));
+
+      const result = await createQuickbooksPayment({
+        customer_ref: 'cust-1',
+        total_amt: 0,
+        line: [
+          { amount: 0, linked_txn: [{ txn_id: '123', txn_type: 'Invoice' }] },
+          { amount: 50, linked_txn: [{ txn_id: '456', txn_type: 'CreditMemo' }] },
+        ],
+      });
+
+      expect(result.isError).toBe(false);
+      expect((mockQuickBooksInstance.createPayment as jest.Mock).mock.calls[0][0]).toStrictEqual({
+        CustomerRef: { value: 'cust-1' },
+        TotalAmt: 0,
+        Line: [
+          { Amount: 0, LinkedTxn: [{ TxnId: '123', TxnType: 'Invoice' }] },
+          { Amount: 50, LinkedTxn: [{ TxnId: '456', TxnType: 'CreditMemo' }] },
+        ],
+      });
+    });
+
     describe('duplicate guard', () => {
       const input = { customer_ref: 'cust-1', total_amt: 100, txn_date: '2026-11-05', payment_ref_num: 'EFT-1' };
 

@@ -7,8 +7,9 @@
  * - Invoice without one: an invoice for the same customer, in the date window, whose
  *   SalesItemLineDetail amounts sum to ours within a cent.
  * - Payment: a payment for the same customer, in the date window, that either has the same
- *   PaymentRefNum, or has the same TotalAmt AND is applied to the same set of invoices. The same
- *   customer paying the same amount against different invoices on the same day is normal.
+ *   PaymentRefNum, or has the same TotalAmt AND the same set of linked transactions (invoices,
+ *   credit memos, any type). The same customer paying the same amount against different invoices
+ *   on the same day is normal, and so is a $0 payment applying a second credit memo to an invoice.
  *
  * The date window is the exact TxnDate when the caller gives one, else the last 3 days (UTC).
  */
@@ -83,11 +84,13 @@ export async function findDuplicateInvoice(quickbooks: any, input: InvoiceDuplic
   return match || null;
 }
 
-/** The set of Invoice ids, as one comparable string: sorted, de-duplicated, "" when none. */
-const invoiceSetKey = (links: Array<{ id: unknown; type: unknown }>): string =>
-  [...new Set(links.filter((l) => String(l.type).toLowerCase() === "invoice").map((l) => String(l.id)))]
-    .sort()
-    .join(",");
+/**
+ * The set of linked transactions, as one comparable string of "<type>:<id>" (type lower-cased):
+ * sorted, de-duplicated, "" when none. Every type counts, so applying credit memo 456 to invoice
+ * 123 differs from applying credit memo 457 to it.
+ */
+const linkedTxnSetKey = (links: Array<{ id: unknown; type: unknown }>): string =>
+  [...new Set(links.map((l) => `${String(l.type).toLowerCase()}:${String(l.id)}`))].sort().join(",");
 
 export async function findDuplicatePayment(quickbooks: any, input: PaymentDuplicateInput): Promise<any | null> {
   // TotalAmt is compared here rather than in the query: a PaymentRefNum match counts at any amount.
@@ -99,7 +102,7 @@ export async function findDuplicatePayment(quickbooks: any, input: PaymentDuplic
   const payments: any[] = response.QueryResponse.Payment || [];
 
   const ourAmount = toCents(input.total_amt);
-  const ourInvoices = invoiceSetKey(
+  const ourLinks = linkedTxnSetKey(
     (input.line || []).flatMap((l) => l.linked_txn).map((lt) => ({ id: lt.txn_id, type: lt.txn_type }))
   );
 
@@ -107,12 +110,12 @@ export async function findDuplicatePayment(quickbooks: any, input: PaymentDuplic
     if (input.payment_ref_num && payment.PaymentRefNum === input.payment_ref_num) {
       return true;
     }
-    const theirInvoices = invoiceSetKey(
+    const theirLinks = linkedTxnSetKey(
       (payment.Line || [])
         .flatMap((line: any) => line.LinkedTxn || [])
         .map((lt: any) => ({ id: lt.TxnId, type: lt.TxnType }))
     );
-    return toCents(Number(payment.TotalAmt)) === ourAmount && theirInvoices === ourInvoices;
+    return toCents(Number(payment.TotalAmt)) === ourAmount && theirLinks === ourLinks;
   });
   return match || null;
 }

@@ -197,7 +197,7 @@ Complete CRUD operations are available for all entity types:
 
 | Tool | Description |
 |------|-------------|
-| `create_payment` | Record a customer payment. Refuses a likely duplicate (same customer + date window, and either the same PaymentRefNum or the same TotalAmt applied to the same invoices) unless `allow_duplicate: true` |
+| `create_payment` | Record a customer payment. Refuses a likely duplicate (same customer + date window, and either the same PaymentRefNum or the same TotalAmt with the same linked transactions — invoices and credit memos alike) unless `allow_duplicate: true`. `total_amt` may be 0: a $0 payment applies a credit memo to an invoice when `line` links both |
 | `get_payment` | Get payment by ID |
 | `update_payment` | Update payment details |
 | `delete_payment` | Void a payment |
