@@ -1,6 +1,7 @@
 import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import { patchLinesTotalCents, belowZeroError } from "../helpers/invoice-total.js";
 
 export interface UpdateInvoiceInput {
   invoice_id: string;
@@ -8,6 +9,13 @@ export interface UpdateInvoiceInput {
 }
 
 export async function updateQuickbooksInvoice({ invoice_id, patch }: UpdateInvoiceInput): Promise<ToolResponse<any>> {
+  // A patch that replaces the lines may hold negative or zero lines, but the resulting invoice total may
+  // not be below zero. Checked before any QBO call. A patch without Line leaves the lines as they are.
+  if (Array.isArray(patch?.Line)) {
+    const belowZero = belowZeroError(patchLinesTotalCents(patch.Line));
+    if (belowZero) return { result: null, isError: true, error: belowZero };
+  }
+
   try {
     const quickbooks = await QuickbooksClient.getInstance();
 

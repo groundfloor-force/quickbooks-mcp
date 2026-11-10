@@ -9,7 +9,10 @@ const toolDescription =
 const lineItemSchema = z.object({
   item_ref: z.string().min(1),
   qty: z.number().positive(),
-  unit_price: z.number().nonnegative(),
+  unit_price: z
+    .number()
+    .finite()
+    .describe("May be negative (an adjustment) or zero; the invoice total may not be below zero"),
   description: z.string().optional(),
   tax_code_ref: z
     .string()
