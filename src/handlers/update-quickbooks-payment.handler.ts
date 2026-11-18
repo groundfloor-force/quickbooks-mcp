@@ -9,11 +9,28 @@ export interface UpdatePaymentInput {
   total_amt?: number;
   payment_method_ref?: string;
   private_note?: string;
+  /** Move the payment to another deposit-to account; refused when it is already in a bank deposit. */
+  deposit_to_account?: string;
 }
 
 export async function updateQuickbooksPayment(data: UpdatePaymentInput): Promise<ToolResponse<any>> {
   try {
     const quickbooks = await QuickbooksClient.getInstance();
+
+    // A payment in a bank deposit cannot move to another account without leaving that deposit: read it first.
+    if (data.deposit_to_account) {
+      const current: any = await new Promise((resolve, reject) => {
+        (quickbooks as any).getPayment(data.id, (err: any, payment: any) => (err ? reject(err) : resolve(payment)));
+      });
+      const deposit = (current?.LinkedTxn ?? []).find((t: any) => t?.TxnType === 'Deposit');
+      if (deposit) {
+        return {
+          result: null,
+          isError: true,
+          error: `payment ${data.id} is already in deposit ${deposit.TxnId}; its deposit-to account cannot change while it is deposited`,
+        };
+      }
+    }
 
     const paymentPayload: any = {
       Id: data.id,
@@ -32,6 +49,9 @@ export async function updateQuickbooksPayment(data: UpdatePaymentInput): Promise
     }
     if (data.private_note) {
       paymentPayload.PrivateNote = data.private_note;
+    }
+    if (data.deposit_to_account) {
+      paymentPayload.DepositToAccountRef = { value: data.deposit_to_account };
     }
 
     return new Promise((resolve) => {
