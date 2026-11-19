@@ -41,14 +41,14 @@ describe('update_payment: line (which invoices a payment applies to, and how muc
     expect(ok([{ amount: 1 }])).toBe(false);
   });
 
-  it('124362: the unapplied cent is applied -- the payment read first, then a sparse update with the full Line only', async () => {
+  it('124362: the unapplied cent is applied -- the payment read first, then the full object with the new Line', async () => {
     reads(p124362);
     sends();
     const r = await run({ id: '124362', sync_token: '3', line: [invoiceLine(399.63)] });
     expect(text(r)).toMatch(/^Payment updated successfully:/);
     expect((mockQuickBooksInstance.getPayment as jest.Mock).mock.calls[0][0]).toBe('124362');
     expect(sent()).toStrictEqual([{
-      Id: '124362', SyncToken: '3', sparse: true,
+      Id: '124362', SyncToken: '3', sparse: false, TotalAmt: 399.63, TxnDate: '2026-11-07', DepositToAccountRef: { value: '1150040002' },
       Line: [{ Amount: 399.63, LinkedTxn: [{ TxnId: '124361', TxnType: 'Invoice' }] }],
     }]);
   });
@@ -72,7 +72,8 @@ describe('update_payment: line (which invoices a payment applies to, and how muc
     reads(p124362);
     sends();
     expect(text(await run({ id: '124362', sync_token: '3', total_amt: 400, line: [invoiceLine(400)] }))).toMatch(/^Payment updated successfully:/);
-    expect(sent()[0]).toStrictEqual({ Id: '124362', SyncToken: '3', sparse: true, TotalAmt: 400, Line: [{ Amount: 400, LinkedTxn: [{ TxnId: '124361', TxnType: 'Invoice' }] }] });
+    expect(sent()[0]).toStrictEqual({ Id: '124362', SyncToken: '3', sparse: false, TotalAmt: 400, TxnDate: '2026-11-07', DepositToAccountRef: { value: '1150040002' },
+      Line: [{ Amount: 400, LinkedTxn: [{ TxnId: '124361', TxnType: 'Invoice' }] }] });
     resetAllMocks();
     (mockQuickbooksClientClass.getInstance as any).mockResolvedValue(mockQuickBooksInstance);
     reads(p124362);
@@ -125,7 +126,8 @@ describe('update_payment: line (which invoices a payment applies to, and how muc
     reads(bare);
     sends();
     expect(text(await run({ id: '124362', sync_token: '3', deposit_to_account: '7' }))).toMatch(/^Payment updated successfully:/);
-    expect(sent()[0]).toStrictEqual({ Id: '124362', SyncToken: '3', sparse: true, DepositToAccountRef: { value: '7' } });
+    expect(sent()[0]).toStrictEqual({ Id: '124362', SyncToken: '3', sparse: false, TotalAmt: 399.63, TxnDate: '2026-11-07', DepositToAccountRef: { value: '7' },
+      Line: [{ Amount: 399.62, LinkedTxn: [{ TxnId: '124361', TxnType: 'Invoice' }] }] });
   });
 
   it('a payment read without a total (and no total_amt given) is refused: the limit is not known', async () => {
