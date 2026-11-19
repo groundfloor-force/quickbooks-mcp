@@ -261,6 +261,12 @@ describe('Payment Handlers', () => {
   });
 
   describe('updateQuickbooksPayment', () => {
+    // Every update reads the payment first and sends the full object (DECISIONS 149).
+    beforeEach(() => {
+      (mockQuickBooksInstance.getPayment as jest.Mock).mockImplementation((_id: any, cb: any) => cb(null,
+        { Id: '123', SyncToken: '0', TxnDate: '2026-11-01', TotalAmt: 100, CustomerRef: { value: 'cust-0' }, DepositToAccountRef: { value: '7' }, PaymentMethodRef: { value: 'pm-0' }, Line: [] }));
+    });
+
     it('should update a payment', async () => {
       const mockUpdated = { Id: '123', TotalAmt: 150 };
       (mockQuickBooksInstance.updatePayment as jest.Mock).mockImplementation(
@@ -289,6 +295,9 @@ describe('Payment Handlers', () => {
       });
 
       expect(result.isError).toBe(false);
+      expect((mockQuickBooksInstance.updatePayment as jest.Mock).mock.calls[0][0]).toStrictEqual({
+        Id: '123', SyncToken: '0', sparse: false, CustomerRef: { value: 'cust-1' }, TotalAmt: 200, TxnDate: '2026-11-01',
+        DepositToAccountRef: { value: '7' }, PaymentMethodRef: { value: 'pm-1' }, PrivateNote: 'Updated payment note', Line: [] });
     });
 
     it('should update without total_amt', async () => {

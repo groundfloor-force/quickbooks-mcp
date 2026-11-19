@@ -40,19 +40,52 @@ export function lineProblem(line: NonNullable<UpdatePaymentInput['line']>, total
   return null;
 }
 
+/** A reference as QuickBooks takes it back: its value only (a name it returned is not ours to send). */
+const refOf = (r: any) => (r?.value !== undefined && r?.value !== null && String(r.value) !== '' ? { value: String(r.value) } : undefined);
+
+/**
+ * The full object a payment update sends (DECISIONS 149): `current` as read, with the change merged in. Its writable
+ * fields only -- Id and SyncToken from the read, CustomerRef, TotalAmt, TxnDate, DepositToAccountRef, PaymentMethodRef,
+ * PaymentRefNum, PrivateNote, Line -- never the read-only ones (MetaData, domain, the top-level LinkedTxn, each line's
+ * LineEx). `sparse: false` is said out loud: node-quickbooks makes an update sparse when the object does not say.
+ */
+export function fullPaymentUpdate(current: any, data: UpdatePaymentInput): any {
+  const line = data.line
+    ? data.line.map((l) => ({ Amount: l.amount, LinkedTxn: l.linked_txn.map((t) => ({ TxnId: t.txn_id, TxnType: t.txn_type })) }))
+    : (current.Line ?? []).map(({ LineEx: _readOnly, ...l }: any) => l);
+  const body: any = {
+    Id: String(current.Id),
+    SyncToken: String(current.SyncToken),
+    sparse: false,
+    CustomerRef: data.customer_ref ? { value: data.customer_ref } : refOf(current.CustomerRef),
+    TotalAmt: data.total_amt !== undefined ? data.total_amt : current.TotalAmt,
+    TxnDate: current.TxnDate,
+    DepositToAccountRef: data.deposit_to_account ? { value: data.deposit_to_account } : refOf(current.DepositToAccountRef),
+    PaymentMethodRef: data.payment_method_ref ? { value: data.payment_method_ref } : refOf(current.PaymentMethodRef),
+    PaymentRefNum: current.PaymentRefNum,
+    PrivateNote: data.private_note ? data.private_note : current.PrivateNote,
+    Line: line,
+  };
+  for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
+  return body;
+}
+
 export async function updateQuickbooksPayment(data: UpdatePaymentInput): Promise<ToolResponse<any>> {
   try {
     const quickbooks = await QuickbooksClient.getInstance();
 
-    // Read first when the update depends on what the payment is: a payment in a bank deposit cannot move to another
-    // account without leaving that deposit; new lines are checked against its total.
-    const current: any = data.deposit_to_account || data.line
-      ? await new Promise((resolve, reject) => {
-        (quickbooks as any).getPayment(data.id, (err: any, payment: any) => (err ? reject(err) : resolve(payment)));
-      })
-      : null;
-    if ((data.deposit_to_account || data.line) && !current) {
+    // Always read first (gd-qbo-worker DECISIONS 149): QuickBooks payment updates are not sparse -- a sparse update that
+    // changes Line is refused ("Required param missing, need to supply the required value for the API") -- so every
+    // change is merged into the full object as read. The read also feeds the guards below.
+    const current: any = await new Promise((resolve, reject) => {
+      (quickbooks as any).getPayment(data.id, (err: any, payment: any) => (err ? reject(err) : resolve(payment)));
+    });
+    if (!current) {
       return { result: null, isError: true, error: `payment ${data.id} could not be read; nothing was changed` };
+    }
+    // The caller's SyncToken is its optimistic lock: a payment changed since it read it is not overwritten.
+    if (String(current.SyncToken) !== String(data.sync_token)) {
+      return { result: null, isError: true, error: `payment ${data.id} changed since it was read (SyncToken ${current.SyncToken}, not ${data.sync_token}); nothing was changed` };
     }
     if (data.line) {
       const why = lineProblem(data.line, cents(data.total_amt ?? current.TotalAmt));
@@ -69,33 +102,7 @@ export async function updateQuickbooksPayment(data: UpdatePaymentInput): Promise
       }
     }
 
-    const paymentPayload: any = {
-      Id: data.id,
-      SyncToken: data.sync_token,
-      sparse: true,
-    };
-
-    if (data.customer_ref) {
-      paymentPayload.CustomerRef = { value: data.customer_ref };
-    }
-    if (data.total_amt !== undefined) {
-      paymentPayload.TotalAmt = data.total_amt;
-    }
-    if (data.payment_method_ref) {
-      paymentPayload.PaymentMethodRef = { value: data.payment_method_ref };
-    }
-    if (data.private_note) {
-      paymentPayload.PrivateNote = data.private_note;
-    }
-    if (data.deposit_to_account) {
-      paymentPayload.DepositToAccountRef = { value: data.deposit_to_account };
-    }
-    if (data.line) {
-      paymentPayload.Line = data.line.map((l) => ({
-        Amount: l.amount,
-        LinkedTxn: l.linked_txn.map((t) => ({ TxnId: t.txn_id, TxnType: t.txn_type })),
-      }));
-    }
+    const paymentPayload = fullPaymentUpdate(current, data);
 
     return new Promise((resolve) => {
       (quickbooks as any).updatePayment(paymentPayload, (err: any, updated: any) => {

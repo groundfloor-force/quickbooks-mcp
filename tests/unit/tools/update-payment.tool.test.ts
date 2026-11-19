@@ -28,14 +28,14 @@ describe('update_payment: deposit_to_account', () => {
     expect(UpdatePaymentTool.schema.safeParse({ id: '1', sync_token: '0', deposit_to_account: '' }).success).toBe(false);
   });
 
-  it('a payment in Undeposited Funds moves: a sparse update with DepositToAccountRef only, its date untouched', async () => {
+  it('a payment in Undeposited Funds moves: the full object as read with the new account, its date untouched', async () => {
     (mockQuickBooksInstance.getPayment as jest.Mock).mockImplementation((_id: any, cb: any) => cb(null, inUndeposited));
     (mockQuickBooksInstance.updatePayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { ...inUndeposited, SyncToken: '1', DepositToAccountRef: { value: '1150040002' } }));
     const r = await run({ id: '125858', sync_token: '0', deposit_to_account: '1150040002' });
     expect(text(r)).toMatch(/^Payment updated successfully:/);
     expect((mockQuickBooksInstance.getPayment as jest.Mock).mock.calls[0][0]).toBe('125858');
     expect((mockQuickBooksInstance.updatePayment as jest.Mock).mock.calls[0][0]).toStrictEqual({
-      Id: '125858', SyncToken: '0', sparse: true, DepositToAccountRef: { value: '1150040002' },
+      Id: '125858', SyncToken: '0', sparse: false, TxnDate: '2026-11-12', DepositToAccountRef: { value: '1150040002' }, Line: [],
     });
   });
 
@@ -53,10 +53,12 @@ describe('update_payment: deposit_to_account', () => {
     expect(mockQuickBooksInstance.updatePayment).not.toHaveBeenCalled();
   });
 
-  it('without deposit_to_account nothing changes: no read first, the same payload as before', async () => {
+  it('any other change is read first too, and sent as the full object (DECISIONS 149: payment updates are not sparse)', async () => {
+    (mockQuickBooksInstance.getPayment as jest.Mock).mockImplementation((_id: any, cb: any) => cb(null, { ...inUndeposited, Id: '1' }));
     (mockQuickBooksInstance.updatePayment as jest.Mock).mockImplementation((_p: any, cb: any) => cb(null, { Id: '1' }));
     await run({ id: '1', sync_token: '0', private_note: 'n' });
-    expect(mockQuickBooksInstance.getPayment).not.toHaveBeenCalled();
-    expect((mockQuickBooksInstance.updatePayment as jest.Mock).mock.calls[0][0]).toStrictEqual({ Id: '1', SyncToken: '0', sparse: true, PrivateNote: 'n' });
+    expect((mockQuickBooksInstance.getPayment as jest.Mock).mock.calls[0][0]).toBe('1');
+    expect((mockQuickBooksInstance.updatePayment as jest.Mock).mock.calls[0][0]).toStrictEqual({
+      Id: '1', SyncToken: '0', sparse: false, TxnDate: '2026-11-12', DepositToAccountRef: { value: '7' }, PrivateNote: 'n', Line: [] });
   });
 });
