@@ -11,6 +11,11 @@ export interface UpdatePaymentInput {
   private_note?: string;
   /** Move the payment to another deposit-to account; refused when it is already in a bank deposit. */
   deposit_to_account?: string;
+  /**
+   * The reference no. (PaymentRefNum), e.g. an e-transfer's reference (gd-qbo-worker DECISIONS 156: an old-sync payment
+   * kept it only in its memo). QuickBooks keeps 21 characters; the schema refuses more.
+   */
+  payment_ref_num?: string;
   /** The payment's full Line array (a sparse update replaces it whole); guarded against applying more than the total. */
   line?: { amount: number; linked_txn: { txn_id: string; txn_type: string }[] }[];
 }
@@ -62,7 +67,7 @@ export function fullPaymentUpdate(current: any, data: UpdatePaymentInput): any {
     TxnDate: current.TxnDate,
     DepositToAccountRef: data.deposit_to_account ? { value: data.deposit_to_account } : refOf(current.DepositToAccountRef),
     PaymentMethodRef: data.payment_method_ref ? { value: data.payment_method_ref } : refOf(current.PaymentMethodRef),
-    PaymentRefNum: current.PaymentRefNum,
+    PaymentRefNum: data.payment_ref_num !== undefined ? data.payment_ref_num : current.PaymentRefNum,
     PrivateNote: data.private_note ? data.private_note : current.PrivateNote,
     Line: line,
   };
