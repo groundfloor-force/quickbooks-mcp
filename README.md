@@ -259,7 +259,7 @@ Complete CRUD operations are available for all entity types:
 |------|-------------|
 | `create_deposit` | Create a bank deposit. A line can link a transaction sitting in Undeposited Funds: `payment_id` for a Payment, or `linked_txn` for a Payment, SalesReceipt, JournalEntry, RefundReceipt or Transfer. Amounts may be negative, so a $0 deposit clears a payment against an offsetting journal entry; a JournalEntry line with no `txn_line_id` links that entry's Undeposited Funds line |
 | `get_deposit` | Get deposit by ID |
-| `update_deposit` | Update deposit details |
+| `update_deposit` | Update deposit details; with `line`, add ONE negative fee line to a bank-charges expense account (the deposit's lines passed back unchanged; the total drops by exactly the fee) |
 | `delete_deposit` | Delete a deposit |
 | `search_deposits` | Search deposits |
 | `create_transfer` | Create an account transfer |
