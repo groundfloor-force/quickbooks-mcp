@@ -20,6 +20,9 @@ const toolSchema = z.object({
   total_amt: z.number().optional().describe("Total payment amount"),
   payment_method_ref: z.string().optional().describe("Payment method ID"),
   private_note: z.string().optional().describe("Private note"),
+  payment_ref_num: z.string().min(1).max(21).optional().describe(
+    "Reference no. for the payment (PaymentRefNum), e.g. an e-transfer reference. QuickBooks keeps 21 characters."
+  ),
   deposit_to_account: z.string().min(1).optional().describe(
     "Account ID to move the payment to (DepositToAccountRef), e.g. Undeposited Funds or a bank account. Refused if the payment is already in a bank deposit."
   ),
