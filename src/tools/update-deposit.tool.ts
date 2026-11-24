@@ -8,7 +8,8 @@ const toolDescription =
   "sparse:false): payment lines may be added (a payment deposited whole, from Undeposited Funds, in no other deposit) or " +
   "removed (it goes back to Undeposited Funds); a kept payment keeps its amount; every other line comes back unchanged; " +
   "at most one new line, a negative fee to a bank-charges expense account (AccountType Expense, AccountSubType " +
-  "BankCharges). The total is the lines' sum. Pass the deposit's sync_token: a deposit changed since is not overwritten.";
+  "BankCharges). The total is the lines' sum. With `txn_date`, the deposit's date. Pass the deposit's sync_token: a deposit " +
+  "changed since is not overwritten.";
 
 const lineSchema = z
   .object({
@@ -32,6 +33,9 @@ const toolSchema = z.object({
   id: z.string().min(1).describe("Deposit ID"),
   sync_token: z.string().min(1).describe("Sync token"),
   private_note: z.string().optional().describe("Private note"),
+  txn_date: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/).optional().describe(
+    "The deposit's date (TxnDate), YYYY-MM-DD: e.g. a deposit holding one payment re-dated in GorillaDesk. A date that does not exist (2026-02-30) is refused."
+  ),
   line: z
     .array(lineSchema)
     .min(1)

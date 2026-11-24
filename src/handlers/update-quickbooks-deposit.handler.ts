@@ -1,6 +1,7 @@
 import { QuickbooksClient } from "../clients/quickbooks-client.js";
 import { ToolResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import { isRealDate } from "./update-quickbooks-payment.handler.js";
 
 /** One deposit line in create_deposit's shape: a linked transaction (payment_id or linked_txn), or an account line. */
 export interface DepositLineInput {
@@ -15,6 +16,11 @@ export interface UpdateDepositInput {
   id: string;
   sync_token: string;
   private_note?: string;
+  /**
+   * The deposit's date (TxnDate), YYYY-MM-DD (gd-qbo-worker DECISIONS 165: a deposit holding only a payment re-dated in
+   * GorillaDesk is re-dated with it). Under the caller's SyncToken; read back.
+   */
+  txn_date?: string;
   /**
    * The deposit's FULL Line array, as it is to be (sent as a full object, sparse:false). Guarded:
    *   - payment lines may be added and removed (gd-qbo-worker DECISIONS 164: a cheque deposit fixed in place). A kept
@@ -149,6 +155,14 @@ export async function updateQuickbooksDeposit(data: UpdateDepositInput): Promise
       });
     });
 
+    if (data.txn_date !== undefined) {
+      if (!isRealDate(data.txn_date)) return { result: null, isError: true, error: `deposit ${data.id}: ${data.txn_date} is not a date (YYYY-MM-DD); nothing was changed` };
+      if (!current) return { result: null, isError: true, error: `deposit ${data.id} could not be read; nothing was changed` };
+      // The caller's SyncToken is its optimistic lock, as for its lines.
+      if (String(current.SyncToken) !== String(data.sync_token)) {
+        return { result: null, isError: true, error: `deposit ${data.id} changed since it was read (SyncToken ${current.SyncToken}, not ${data.sync_token}); nothing was changed` };
+      }
+    }
     if (data.line) {
       if (!current) return { result: null, isError: true, error: `deposit ${data.id} could not be read; nothing was changed` };
       // The caller's SyncToken is its optimistic lock: a deposit changed since it read it is not overwritten.
@@ -173,6 +187,11 @@ export async function updateQuickbooksDeposit(data: UpdateDepositInput): Promise
 
     const payload: any = { ...current, SyncToken: data.sync_token };
     if (data.private_note) payload.PrivateNote = data.private_note;
+    if (data.txn_date !== undefined) {
+      payload.TxnDate = data.txn_date;
+      payload.sparse = false;
+      delete payload.MetaData;
+    }
     if (data.line) {
       payload.Line = linesFor(current, data.line);
       // The total is the lines' sum.
@@ -187,6 +206,9 @@ export async function updateQuickbooksDeposit(data: UpdateDepositInput): Promise
         else if (data.line && cents(updated?.TotalAmt) !== cents(payload.TotalAmt)) {
           resolve({ result: updated, isError: true,
             error: `deposit ${data.id} read back totalling ${updated?.TotalAmt}, not ${payload.TotalAmt}; check it in QuickBooks` });
+        } else if (data.txn_date !== undefined && (updated?.TxnDate !== data.txn_date || cents(updated?.TotalAmt) !== cents(payload.TotalAmt))) {
+          resolve({ result: updated, isError: true,
+            error: `deposit ${data.id} read back dated ${updated?.TxnDate} totalling ${updated?.TotalAmt}, not ${data.txn_date} and ${payload.TotalAmt}; check it in QuickBooks` });
         } else resolve({ result: updated, isError: false, error: null });
       });
     });
