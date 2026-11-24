@@ -172,23 +172,28 @@ describe("delete_deposit: the guarded delete", () => {
 
   it("is its own category; every other delete_ is DELETE", () => {
     expect(getCrudCategory("delete_deposit")).toBe("GUARDED_DELETE");
+    expect(getCrudCategory("delete_purchase")).toBe("GUARDED_DELETE"); // the worker's Square fee Expenses only (DECISIONS 166)
     expect(getCrudCategory("delete_payment")).toBe("DELETE");
+    expect(getCrudCategory("delete_purchase_order")).toBe("DELETE");
     expect(getCrudCategory("delete-deposit")).toBe("DELETE");
   });
 
   it("stays on under QUICKBOOKS_DISABLE_DELETE=true, while every other delete is off", () => {
     process.env["QUICKBOOKS_DISABLE_DELETE"] = "true";
     expect(isToolDisabled("delete_deposit")).toBe(false);
-    for (const t of ["delete_payment", "delete_invoice", "delete_journal_entry", "delete_transfer"]) expect(isToolDisabled(t)).toBe(true);
+    expect(isToolDisabled("delete_purchase")).toBe(false);
+    for (const t of ["delete_payment", "delete_invoice", "delete_journal_entry", "delete_transfer", "delete_purchase_order"]) expect(isToolDisabled(t)).toBe(true);
     const server = { tool: jest.fn() } as unknown as McpServer;
     RegisterTool(server, def("delete_deposit"));
+    RegisterTool(server, def("delete_purchase"));
     RegisterTool(server, def("delete_payment"));
-    expect((server.tool as jest.Mock).mock.calls.map((c: any) => c[0])).toStrictEqual(["delete_deposit"]);
+    expect((server.tool as jest.Mock).mock.calls.map((c: any) => c[0])).toStrictEqual(["delete_deposit", "delete_purchase"]);
   });
 
   it("is off under QUICKBOOKS_DISABLE_GUARDED_DELETE=true", () => {
     process.env["QUICKBOOKS_DISABLE_GUARDED_DELETE"] = "true";
     expect(isToolDisabled("delete_deposit")).toBe(true);
+    expect(isToolDisabled("delete_purchase")).toBe(true);
     expect(isToolDisabled("delete_payment")).toBe(false);
   });
 });

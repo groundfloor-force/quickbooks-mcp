@@ -29,11 +29,13 @@ export const DISABLE_ENV = {
 
 /**
  * Tools whose own guards make them their own category. delete_deposit deletes only a deposit dated after the caller's
- * bank_reconciled_through that QuickBooks confirms is unreconciled (gd-qbo-worker DECISIONS 164): it stays on where
- * QUICKBOOKS_DISABLE_DELETE turns every other delete off (APC), and QUICKBOOKS_DISABLE_GUARDED_DELETE turns it off.
+ * bank_reconciled_through that QuickBooks confirms is unreconciled (gd-qbo-worker DECISIONS 164); delete_purchase only a
+ * Square fee Expense the worker made, under the same guards (DECISIONS 166). They stay on where QUICKBOOKS_DISABLE_DELETE
+ * turns every other delete off (APC), and QUICKBOOKS_DISABLE_GUARDED_DELETE turns them off (GFPM, CORE).
  */
 export const TOOL_CATEGORY: Record<string, CrudCategory> = {
   delete_deposit: CRUD_CATEGORY.GUARDED_DELETE,
+  delete_purchase: CRUD_CATEGORY.GUARDED_DELETE,
 };
 
 /** 
