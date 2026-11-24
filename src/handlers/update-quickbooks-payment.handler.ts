@@ -9,6 +9,11 @@ export interface UpdatePaymentInput {
   total_amt?: number;
   payment_method_ref?: string;
   private_note?: string;
+  /**
+   * The payment's date, YYYY-MM-DD (gd-qbo-worker DECISIONS 160: an e-transfer dated the day Interac's email says it was
+   * received). Refused, with nothing read or sent, when it is not a real date.
+   */
+  txn_date?: string;
   /** Move the payment to another deposit-to account; refused when it is already in a bank deposit. */
   deposit_to_account?: string;
   /**
@@ -45,12 +50,19 @@ export function lineProblem(line: NonNullable<UpdatePaymentInput['line']>, total
   return null;
 }
 
+/** A real calendar date written YYYY-MM-DD (2026-02-30 is not one). */
+export function isRealDate(s: string): boolean {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 /** A reference as QuickBooks takes it back: its value only (a name it returned is not ours to send). */
 const refOf = (r: any) => (r?.value !== undefined && r?.value !== null && String(r.value) !== '' ? { value: String(r.value) } : undefined);
 
 /**
  * The full object a payment update sends (DECISIONS 149): `current` as read, with the change merged in. Its writable
- * fields only -- Id and SyncToken from the read, CustomerRef, TotalAmt, TxnDate, DepositToAccountRef, PaymentMethodRef,
+ * fields only -- Id and SyncToken from the read, CustomerRef, TotalAmt, TxnDate (txn_date, DECISIONS 160), DepositToAccountRef, PaymentMethodRef,
  * PaymentRefNum, PrivateNote, Line -- never the read-only ones (MetaData, domain, the top-level LinkedTxn, each line's
  * LineEx). `sparse: false` is said out loud: node-quickbooks makes an update sparse when the object does not say.
  */
@@ -64,7 +76,7 @@ export function fullPaymentUpdate(current: any, data: UpdatePaymentInput): any {
     sparse: false,
     CustomerRef: data.customer_ref ? { value: data.customer_ref } : refOf(current.CustomerRef),
     TotalAmt: data.total_amt !== undefined ? data.total_amt : current.TotalAmt,
-    TxnDate: current.TxnDate,
+    TxnDate: data.txn_date !== undefined ? data.txn_date : current.TxnDate,
     DepositToAccountRef: data.deposit_to_account ? { value: data.deposit_to_account } : refOf(current.DepositToAccountRef),
     PaymentMethodRef: data.payment_method_ref ? { value: data.payment_method_ref } : refOf(current.PaymentMethodRef),
     PaymentRefNum: data.payment_ref_num !== undefined ? data.payment_ref_num : current.PaymentRefNum,
@@ -76,6 +88,9 @@ export function fullPaymentUpdate(current: any, data: UpdatePaymentInput): any {
 }
 
 export async function updateQuickbooksPayment(data: UpdatePaymentInput): Promise<ToolResponse<any>> {
+  if (data.txn_date !== undefined && !isRealDate(data.txn_date)) {
+    return { result: null, isError: true, error: `payment ${data.id}: ${data.txn_date} is not a date (YYYY-MM-DD); nothing was changed` };
+  }
   try {
     const quickbooks = await QuickbooksClient.getInstance();
 

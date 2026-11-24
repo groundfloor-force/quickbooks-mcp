@@ -23,6 +23,9 @@ const toolSchema = z.object({
   payment_ref_num: z.string().min(1).max(21).optional().describe(
     "Reference no. for the payment (PaymentRefNum), e.g. an e-transfer reference. QuickBooks keeps 21 characters."
   ),
+  txn_date: z.string().regex(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/).optional().describe(
+    "The payment's date (TxnDate), YYYY-MM-DD: e.g. the day an Interac e-transfer was received. A date that does not exist (2026-02-30) is refused."
+  ),
   deposit_to_account: z.string().min(1).optional().describe(
     "Account ID to move the payment to (DepositToAccountRef), e.g. Undeposited Funds or a bank account. Refused if the payment is already in a bank deposit."
   ),
