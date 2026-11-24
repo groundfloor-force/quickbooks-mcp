@@ -70,8 +70,8 @@ QUICKBOOKS_REALM_ID=your_realm_id
 # Optional: restrict which tool categories are registered (default: all enabled)
 # QUICKBOOKS_DISABLE_WRITE=true    # suppress create_* tools
 # QUICKBOOKS_DISABLE_UPDATE=true   # suppress update_* tools
-# QUICKBOOKS_DISABLE_DELETE=true   # suppress delete_* tools (not delete_deposit: see below)
-# QUICKBOOKS_DISABLE_GUARDED_DELETE=true   # suppress delete_deposit (guarded: unreconciled, after bank_reconciled_through)
+# QUICKBOOKS_DISABLE_DELETE=true   # suppress delete_* tools (not delete_deposit or delete_purchase: see below)
+# QUICKBOOKS_DISABLE_GUARDED_DELETE=true   # suppress delete_deposit and delete_purchase (guarded: unreconciled, after bank_reconciled_through)
 ```
 
 `.env` is gitignored so your real credentials stay local.
@@ -217,6 +217,8 @@ Complete CRUD operations are available for all entity types:
 | `delete_bill` | Delete a bill |
 | `search_bills` | Search bills with filters |
 | `create_purchase` | Create a purchase (expense). Refuses a likely duplicate (same account + payee + DocNumber, or same account + payee + PaymentType + date window + expense-line total) unless `allow_duplicate: true`. Optional `attachment` (base64 file) is uploaded and linked in the same call; the result's `_attachment` holds `attachable_id`, or `error` if the purchase was created but the upload failed |
+| `update_purchase` | Update a purchase: its Id and SyncToken (as read) and the fields to change, each replacing that field whole (Line replaces every line). Sent as the full purchase (QuickBooks refuses a sparse one), refused if it changed since it was read, read back |
+| `delete_purchase` | Delete a Square fee Expense the GorillaDesk worker made (memo starting "GorillaDesk Square fees"): only one dated after `bank_reconciled_through` that QuickBooks confirms is unreconciled, as read (`sync_token`); read back gone |
 | `create_vendor` | Create a new vendor |
 | `get_vendor` | Get vendor by ID |
 | `update_vendor` | Update vendor details |
@@ -563,10 +565,10 @@ All tool names must follow the `{verb}_{entity}` convention using underscores. T
 | `update_` | UPDATE | `QUICKBOOKS_DISABLE_UPDATE=true` |
 | `delete_` | DELETE | `QUICKBOOKS_DISABLE_DELETE=true` |
 | `void_` | VOID | `QUICKBOOKS_DISABLE_VOID=true` |
-| `delete_deposit` (guarded) | GUARDED_DELETE | `QUICKBOOKS_DISABLE_GUARDED_DELETE=true` |
+| `delete_deposit`, `delete_purchase` (guarded) | GUARDED_DELETE | `QUICKBOOKS_DISABLE_GUARDED_DELETE=true` |
 | `get_`, `search_`, `read_` | READ | never |
 
-delete_deposit has its own category: it deletes only a deposit dated after the caller's `bank_reconciled_through` that QuickBooks confirms is unreconciled, so it stays on where `QUICKBOOKS_DISABLE_DELETE=true` turns every other delete off.
+delete_deposit and delete_purchase have their own category: delete_deposit deletes only a deposit dated after the caller's `bank_reconciled_through` that QuickBooks confirms is unreconciled; delete_purchase only a Square fee Expense the worker made, under the same guards. So they stay on where `QUICKBOOKS_DISABLE_DELETE=true` turns every other delete off.
 
 New tools that do not follow this convention will not be correctly categorised and may appear or be suppressed unexpectedly.
 
