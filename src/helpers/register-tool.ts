@@ -10,6 +10,7 @@ export const CRUD_CATEGORY = {
   UPDATE: "UPDATE",
   DELETE: "DELETE",
   VOID:   "VOID",
+  GUARDED_DELETE: "GUARDED_DELETE",
   READ:   "READ",
 } as const;
 
@@ -23,7 +24,17 @@ export const DISABLE_ENV = {
   [CRUD_CATEGORY.UPDATE]: "QUICKBOOKS_DISABLE_UPDATE",
   [CRUD_CATEGORY.DELETE]: "QUICKBOOKS_DISABLE_DELETE",
   [CRUD_CATEGORY.VOID]:   "QUICKBOOKS_DISABLE_VOID",
+  [CRUD_CATEGORY.GUARDED_DELETE]: "QUICKBOOKS_DISABLE_GUARDED_DELETE",
 } as const;
+
+/**
+ * Tools whose own guards make them their own category. delete_deposit deletes only a deposit dated after the caller's
+ * bank_reconciled_through that QuickBooks confirms is unreconciled (gd-qbo-worker DECISIONS 164): it stays on where
+ * QUICKBOOKS_DISABLE_DELETE turns every other delete off (APC), and QUICKBOOKS_DISABLE_GUARDED_DELETE turns it off.
+ */
+export const TOOL_CATEGORY: Record<string, CrudCategory> = {
+  delete_deposit: CRUD_CATEGORY.GUARDED_DELETE,
+};
 
 /** 
  * Maps every non-READ verb prefix to its category. Handles both underscore
@@ -47,6 +58,7 @@ export const PREFIX_CATEGORY_MAP: Record<string, CrudCategory> = {
  * Defaults to READ if no prefix matches.
  */
 export function getCrudCategory(toolName: string): CrudCategory {
+  if (Object.prototype.hasOwnProperty.call(TOOL_CATEGORY, toolName)) return TOOL_CATEGORY[toolName];
   for (const [prefix, category] of Object.entries(PREFIX_CATEGORY_MAP)) {
     if (toolName.startsWith(prefix)) return category;
   }

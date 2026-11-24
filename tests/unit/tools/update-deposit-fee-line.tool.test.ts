@@ -42,7 +42,7 @@ describe('update_deposit: one Square fee line inside the deposit', () => {
   it('takes the full Line array, each line exactly one of payment_id / linked_txn / account_ref', () => {
     const ok = (line: unknown) => UpdateDepositTool.schema.safeParse({ id: '1', sync_token: '0', line }).success;
     expect(ok([...back, fee])).toBe(true);
-    expect(ok([fee])).toBe(false); // at least the deposit's own line and the fee
+    expect(ok([])).toBe(false); // at least one line (the handler checks the rest against the deposit)
     expect(ok([...back, { amount: -1 }])).toBe(false);
     expect(ok([...back, { amount: -1, account_ref: '174', payment_id: '9' }])).toBe(false);
   });
@@ -60,15 +60,14 @@ describe('update_deposit: one Square fee line inside the deposit', () => {
     }]);
   });
 
-  it('refuses, sending nothing: a line changed, dropped, added or reordered; a positive or linked fee; two fees; no fee', async () => {
+  // Adding, removing and reordering payment lines is allowed now (DECISIONS 164): update-deposit-payment-lines.tool.test.ts.
+  it('refuses, sending nothing: a kept payment\'s amount changed; a payment twice; two fees; a positive fee; no change at all', async () => {
     const cases: [string, unknown[], RegExp][] = [
-      ['a payment line changed', [{ amount: 81.66, payment_id: '123794' }, back[1], back[2], fee], /line 1 is not the deposit's own line 1, unchanged/],
-      ['reordered', [back[1], back[0], back[2], fee], /line 1 is not the deposit's own line 1/],
-      ['a payment line swapped for another', [back[0], back[1], { amount: 569.25, payment_id: '999999' }, fee], /line 3 is not/],
-      ['a payment line dropped', [back[0], back[1], fee], /the deposit's 3 line\(s\) unchanged plus one fee line \(got 3\)/],
-      ['two fee lines', [...back, fee, fee], /got 5/],
+      ['a payment line changed', [{ amount: 81.66, payment_id: '123794' }, back[1], back[2], fee], /payment 123794 is 81\.65 in the deposit; a kept payment keeps its amount \(got 81\.66\)/],
+      ['two fee lines', [...back, fee, fee], /at most one new line besides payments: one fee line \(got 2\)/],
       ['the fee positive', [...back, { ...fee, amount: 21.14 }], /must be negative/],
-      ['the fee linking a payment', [...back, { amount: -21.14, payment_id: '123794' }], /may not link a transaction/],
+      ['the fee linking a payment already there', [...back, { amount: -21.14, payment_id: '123794' }], /payment 123794 is on two lines/],
+      ['the lines as they are', back, /nothing to change/],
     ];
     for (const [name, line, why] of cases) {
       resetAllMocks();
