@@ -204,6 +204,7 @@ export const mockQuickBooksInstance = {
   reportCashFlow: jest.fn(),
   reportTrialBalance: jest.fn(),
   reportGeneralLedgerDetail: jest.fn(),
+  reportTransactionList: jest.fn(),
   reportCustomerSales: jest.fn(),
   reportItemSales: jest.fn(),
   reportAgedReceivables: jest.fn(),

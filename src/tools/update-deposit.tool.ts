@@ -4,14 +4,16 @@ import { z } from "zod";
 
 const toolName = "update_deposit";
 const toolDescription =
-  "Update a deposit in QuickBooks Online. With `line`, add ONE fee line: pass the deposit's lines back unchanged, in order, " +
-  "then one negative line to a bank-charges expense account (AccountType Expense, AccountSubType BankCharges); the total " +
-  "drops by exactly that line. Nothing else about the lines can change.";
+  "Update a deposit in QuickBooks Online. With `line`, the deposit's FULL Line array as it is to be (a full update, " +
+  "sparse:false): payment lines may be added (a payment deposited whole, from Undeposited Funds, in no other deposit) or " +
+  "removed (it goes back to Undeposited Funds); a kept payment keeps its amount; every other line comes back unchanged; " +
+  "at most one new line, a negative fee to a bank-charges expense account (AccountType Expense, AccountSubType " +
+  "BankCharges). The total is the lines' sum. Pass the deposit's sync_token: a deposit changed since is not overwritten.";
 
 const lineSchema = z
   .object({
-    amount: z.number().describe("Line amount: a deposit line's own amount, or the negative fee"),
-    payment_id: z.string().min(1).optional().describe("A linked Payment (TxnLineId 0), as the deposit has it"),
+    amount: z.number().describe("Line amount: a payment's whole amount, a kept line's own amount, or the negative fee"),
+    payment_id: z.string().min(1).optional().describe("A linked Payment (TxnLineId 0): kept, or added from Undeposited Funds"),
     linked_txn: z
       .object({
         txn_id: z.string().min(1),
@@ -32,10 +34,10 @@ const toolSchema = z.object({
   private_note: z.string().optional().describe("Private note"),
   line: z
     .array(lineSchema)
-    .min(2)
+    .min(1)
     .optional()
     .describe(
-      "The deposit's FULL Line array: its lines as they are, unchanged and in order, then one negative fee line to a bank-charges expense account. Anything else is refused and nothing is sent."
+      "The deposit's FULL Line array as it is to be: payments kept, added or removed; its other lines unchanged; at most one new negative fee line. Anything else is refused and nothing is sent."
     ),
 });
 

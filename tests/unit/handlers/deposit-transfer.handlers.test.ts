@@ -11,7 +11,6 @@ jest.unstable_mockModule('../../../src/clients/quickbooks-client', () => ({
 const { createQuickbooksDeposit } = await import('../../../src/handlers/create-quickbooks-deposit.handler');
 const { getQuickbooksDeposit } = await import('../../../src/handlers/get-quickbooks-deposit.handler');
 const { updateQuickbooksDeposit } = await import('../../../src/handlers/update-quickbooks-deposit.handler');
-const { deleteQuickbooksDeposit } = await import('../../../src/handlers/delete-quickbooks-deposit.handler');
 const { searchQuickbooksDeposits } = await import('../../../src/handlers/search-quickbooks-deposits.handler');
 const { createQuickbooksTransfer } = await import('../../../src/handlers/create-quickbooks-transfer.handler');
 const { getQuickbooksTransfer } = await import('../../../src/handlers/get-quickbooks-transfer.handler');
@@ -209,32 +208,7 @@ describe('Deposit and Transfer Handlers', () => {
       expect(result.isError).toBe(true);
     });
 
-    it('should delete a deposit', async () => {
-      mockQuickBooksInstance.deleteDeposit.mockImplementation((payload: any, cb: any) => cb(null, {}));
-
-      const result = await deleteQuickbooksDeposit({ id: '1', sync_token: '0' });
-
-      expect(result.isError).toBe(false);
-    });
-
-    it('should delete a deposit - authentication error', async () => {
-      (mockQuickbooksClientClass.getInstance as any).mockRejectedValue(new Error('Auth failed'));
-
-      const result = await deleteQuickbooksDeposit({ id: '1', sync_token: '0' });
-
-      expect(result.isError).toBe(true);
-      expect(result.error).toContain('Auth failed');
-    });
-
-    it('should delete a deposit - API error', async () => {
-      mockQuickBooksInstance.deleteDeposit.mockImplementation((payload: any, cb: any) =>
-        cb(new Error('Delete failed'), null)
-      );
-
-      const result = await deleteQuickbooksDeposit({ id: '1', sync_token: '0' });
-
-      expect(result.isError).toBe(true);
-    });
+    // delete_deposit is guarded now (DECISIONS 164): tests/unit/tools/delete-deposit-guarded.tool.test.ts.
 
     it('should search deposits', async () => {
       mockQuickBooksInstance.findDeposits.mockImplementation((criteria: any, cb: any) =>

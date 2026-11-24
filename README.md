@@ -70,7 +70,8 @@ QUICKBOOKS_REALM_ID=your_realm_id
 # Optional: restrict which tool categories are registered (default: all enabled)
 # QUICKBOOKS_DISABLE_WRITE=true    # suppress create_* tools
 # QUICKBOOKS_DISABLE_UPDATE=true   # suppress update_* tools
-# QUICKBOOKS_DISABLE_DELETE=true   # suppress delete_* tools
+# QUICKBOOKS_DISABLE_DELETE=true   # suppress delete_* tools (not delete_deposit: see below)
+# QUICKBOOKS_DISABLE_GUARDED_DELETE=true   # suppress delete_deposit (guarded: unreconciled, after bank_reconciled_through)
 ```
 
 `.env` is gitignored so your real credentials stay local.
@@ -562,7 +563,10 @@ All tool names must follow the `{verb}_{entity}` convention using underscores. T
 | `update_` | UPDATE | `QUICKBOOKS_DISABLE_UPDATE=true` |
 | `delete_` | DELETE | `QUICKBOOKS_DISABLE_DELETE=true` |
 | `void_` | VOID | `QUICKBOOKS_DISABLE_VOID=true` |
+| `delete_deposit` (guarded) | GUARDED_DELETE | `QUICKBOOKS_DISABLE_GUARDED_DELETE=true` |
 | `get_`, `search_`, `read_` | READ | never |
+
+delete_deposit has its own category: it deletes only a deposit dated after the caller's `bank_reconciled_through` that QuickBooks confirms is unreconciled, so it stays on where `QUICKBOOKS_DISABLE_DELETE=true` turns every other delete off.
 
 New tools that do not follow this convention will not be correctly categorised and may appear or be suppressed unexpectedly.
 

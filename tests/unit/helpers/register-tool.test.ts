@@ -156,3 +156,39 @@ describe("RegisterTool", () => {
     expect(server.tool).not.toHaveBeenCalled();
   });
 });
+
+// ── delete_deposit: its own switch (gd-qbo-worker DECISIONS 164) ─────────────────
+// Guarded (unreconciled, after the caller's bank_reconciled_through), it stays on where QUICKBOOKS_DISABLE_DELETE turns
+// every other delete off (APC), and only QUICKBOOKS_DISABLE_GUARDED_DELETE turns it off.
+
+describe("delete_deposit: the guarded delete", () => {
+  const schema = z.object({});
+  const def = (name: string): ToolDefinition<typeof schema> => ({ name, description: name, schema, handler: async () => ({ content: [] }) });
+
+  afterEach(() => {
+    delete process.env["QUICKBOOKS_DISABLE_DELETE"];
+    delete process.env["QUICKBOOKS_DISABLE_GUARDED_DELETE"];
+  });
+
+  it("is its own category; every other delete_ is DELETE", () => {
+    expect(getCrudCategory("delete_deposit")).toBe("GUARDED_DELETE");
+    expect(getCrudCategory("delete_payment")).toBe("DELETE");
+    expect(getCrudCategory("delete-deposit")).toBe("DELETE");
+  });
+
+  it("stays on under QUICKBOOKS_DISABLE_DELETE=true, while every other delete is off", () => {
+    process.env["QUICKBOOKS_DISABLE_DELETE"] = "true";
+    expect(isToolDisabled("delete_deposit")).toBe(false);
+    for (const t of ["delete_payment", "delete_invoice", "delete_journal_entry", "delete_transfer"]) expect(isToolDisabled(t)).toBe(true);
+    const server = { tool: jest.fn() } as unknown as McpServer;
+    RegisterTool(server, def("delete_deposit"));
+    RegisterTool(server, def("delete_payment"));
+    expect((server.tool as jest.Mock).mock.calls.map((c: any) => c[0])).toStrictEqual(["delete_deposit"]);
+  });
+
+  it("is off under QUICKBOOKS_DISABLE_GUARDED_DELETE=true", () => {
+    process.env["QUICKBOOKS_DISABLE_GUARDED_DELETE"] = "true";
+    expect(isToolDisabled("delete_deposit")).toBe(true);
+    expect(isToolDisabled("delete_payment")).toBe(false);
+  });
+});
