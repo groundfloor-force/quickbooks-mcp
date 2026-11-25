@@ -177,6 +177,7 @@ import { UpdateCompanyInfoTool } from "./tools/update-company-info.tool.js";
 
 // Preferences tools
 import { GetPreferencesTool } from "./tools/get-preferences.tool.js";
+import { GetReconciledThroughTool } from "./tools/get-reconciled-through.tool.js";
 
 // Attachable tools
 import { CreateAttachableTool } from "./tools/create-attachable.tool.js";
@@ -415,6 +416,8 @@ export const registerAllTools = (server: McpServer): void => {
 
   // Add tools for preferences
   RegisterTool(server, GetPreferencesTool);
+  // gd-qbo-worker DECISIONS 169: the bank reconciliation date, read from QuickBooks (read only).
+  RegisterTool(server, GetReconciledThroughTool);
 
   // Add tools for attachables
   RegisterTool(server, CreateAttachableTool);
